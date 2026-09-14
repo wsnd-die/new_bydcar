@@ -1,0 +1,109 @@
+# ============================================================
+# bydcar_g491vet6  .gitignore
+# STM32G491VETx / CubeMX + CMake(CLion) + IAR EWARM
+# ============================================================
+
+# --- 编译输出目录 ---
+build/
+build-*/
+cmake-build-*/
+cmake-build-debug/
+cmake-build-release/
+Debug/
+Release/
+out/
+bin/
+obj/
+.cache/
+
+# --- CMake / Ninja 中间产物 ---
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+install_manifest.txt
+
+# --- IAR EWARM 编译产物 ---
+# IAR 默认把中间文件放在 EWARM/<配置名>/ 下的 Obj、List、Exe
+EWARM/*/Obj/
+EWARM/*/List/
+EWARM/*/Exe/
+EWARM/settings/
+*.dep
+*.ewt
+*.ewp.bak
+*.ewd.bak
+Backup of *.ewp
+Backup of *.ewd
+*.cspy.bat
+*.mac.bak
+
+# --- STM32CubeMX ---
+.mxproject
+*.ioc.bak
+
+# --- CLion / JetBrains ---
+.idea/
+*.iml
+*.clion-backup
+
+# --- 编译产物文件类型 ---
+*.o
+*.obj
+*.d
+*.su
+*.lst
+*.elf
+*.hex
+*.bin
+*.map
+*.axf
+*.a
+*.lib
+*.la
+*.so
+*.dll
+*.exe
+
+# --- 编辑器 / 系统临时文件 ---
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+*.temp
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- 压缩包 ---
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ============================================================
+# 以下文件即使匹配上面的规则也必须保留，请勿删除
+# ============================================================
+# IAR 工程入口与配置
+!EWARM/Project.eww
+!EWARM/*.ewp
+!EWARM/*.ewd
+# 启动文件与链接脚本
+!EWARM/startup_*.s
+!EWARM/*.icf
+!STM32G491VETx_FLASH.ld
+!STM32G491VETx_RAM.ld
+# 构建脚本
+!CMakeLists.txt
+!CMakePresets.json
+!cmake/
+# 调试器配置
+!daplink.cfg
