@@ -67,12 +67,18 @@ set(FREERTOS_SOURCES
         uart/msp_uart2.h)
 
 # Application code: CubeMX-generated Core, plus the hand-written app/,
-# algorithm/ and hardware/ folders.
+# algorithm/, hardware/ and device/ folders.
+#
+# device/ is the abstraction layer of the architecture spec (CLAUDE.md): it
+# holds PoseData_t and the LocatorDev_t interface. It is spelled "device" and
+# not "drivers" because Windows filenames are case-insensitive, so a drivers/
+# folder would resolve onto the vendor Drivers/ folder.
 file(GLOB APP_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/*.c
      ${CMAKE_CURRENT_SOURCE_DIR}/app/*.c
      ${CMAKE_CURRENT_SOURCE_DIR}/algorithm/*.c
-     ${CMAKE_CURRENT_SOURCE_DIR}/hardware/*.c)
+     ${CMAKE_CURRENT_SOURCE_DIR}/hardware/*.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/device/*.c)
 
 # The IMU660 drivers and their fusion code have been retired in favour of the
 # WitMotion HWT906 (I2C3, see hardware/hwt_imu.c). The old sources live in
@@ -97,6 +103,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     app
     algorithm
     hardware
+    device
     Drivers/STM32G4xx_HAL_Driver/Inc
     Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
     Drivers/CMSIS/Device/ST/STM32G4xx/Include

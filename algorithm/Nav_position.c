@@ -2,12 +2,23 @@
 // Created by 35037 on 2026/8/12.
 //
 #include "Nav_position.h"
+#include "drv_wheel_odom.h"
+
+/* ============================================================
+ * 兼容适配层 (阶段 0)
+ *
+ * 里程计的实际实现已迁移到 device/drv_wheel_odom.c 的 locator_wheel 实例。
+ * 本文件保留 World_position / World_position_get() / World_Reset() 三个旧符号，
+ * 内部转调 locator_wheel，使现有调用方（app/NavigationMecanum.c 等）无需改动。
+ *
+ * 注意：World_position_get() 保持迁移前的【消费型】语义 —— 每调用一次就推进
+ *       一帧积分。这是既有行为，不是缺陷，阶段 0 不改变它。
+ *       阶段 1 会建 app/task_chassis.c 固定周期调 update()，调用方改走纯读的
+ *       get_pose()，届时本文件即可删除。
+ * ============================================================ */
 
 /* 当前里程计位姿（世界坐标 m / rad），上电原点 (0,0,0) */
 World_Dir_t World_position = {0.0f, 0.0f, 0.0f};
-
-/* 清零请求: 置 1 后下次 World_position_get 以当前编码器为基准重设起点 */
-static volatile uint8_t s_world_reset = 0U;
 
 /**
  * @brief 清零里程计并重新起算 (放完 5 物块后调用, 奖杯段从 0 重新记)
@@ -15,55 +26,30 @@ static volatile uint8_t s_world_reset = 0U;
  */
 void World_Reset(void)
 {
-    /* 电机驱动编码器归零 (地址同 Mecanum_Read_AllPositions: 1~4) */
-    Emm_V5_Reset_CurPos_To_Zero(1);
-    Emm_V5_Reset_CurPos_To_Zero(2);
-    Emm_V5_Reset_CurPos_To_Zero(3);
-    Emm_V5_Reset_CurPos_To_Zero(4);
+    Wheel_Odom_Reset();
 
+    /* 镜像清零: 保持 World_position 在下次 World_position_get() 之前也是 0 */
     World_position.x = 0.0f;
     World_position.y = 0.0f;
     /* yaw 由 IMU 实时给, 不归零 */
-    s_world_reset = 1U;   /* 下次读取以当前编码器为基准, 不跨清零点累积 */
 }
 
 /**
  * @brief 增量式编码器里程计
  * @return 当前世界位姿（同时更新全局 World_position）
+ * @note  适配层: 转调 locator_wheel，行为与迁移前逐位一致。
  */
 World_Dir_t World_position_get(void)
 {
-    static uint8_t     first = 1;
-    static EncoderData prev;
-    EncoderData enc;
-    float d_fwd, d_side, fwd_mm, side_mm;
-    float yaw = g_hwt_imu_yaw_rad;      /* IMU 实测航向 rad (HWT906 直接给角度) */
+    PoseData_t p;
 
-    if (!Mecanum_Read_AllPositions(&enc, 20)) return World_position;
+    /* 保持"消费型"语义: 先推进一帧积分, 再纯读出结果 */
+    locator_wheel.update();
+    locator_wheel.get_pose(&p);
 
-    /* 清零后: 以当前编码器为基准重新起算, 不跨清零点累积 */
-    if (s_world_reset) {
-        prev = enc;
-        s_world_reset = 0U;
-        return World_position;
-    }
-    if (first) { first = 0; prev = enc; return World_position; }
-
-
-
-    /* 麦轮正解 (右轮与左轮编码器反号, 取反统一: 后退全负/前进全正) */
-    d_fwd  = (float)(enc.fl - prev.fl - (enc.fr - prev.fr) +
-                     enc.rl - prev.rl - (enc.rr - prev.rr)) / 4.0f;
-    d_side = (float)(-(enc.fl - prev.fl) - (enc.fr - prev.fr) +
-                     enc.rl - prev.rl + (enc.rr - prev.rr)) / 4.0f;
-    prev = enc;
-
-    /* 脉冲→mm */
-    Odometry_Apply_Calib(d_fwd, d_side, &fwd_mm, &side_mm);
-    World_position.x += (fwd_mm * cosf(yaw) - side_mm * sinf(yaw)) / 2000.0f;
-    World_position.y += (fwd_mm * sinf(yaw) + side_mm * cosf(yaw)) / 2000.0f;
-    World_position.yaw = yaw;
-    // printf("2431:%.2f,%.2f,%.2f,%.2f\r\n",(float)enc.rl,(float)enc.rr,(float)enc.fl,(float)enc.fr);
+    World_position.x   = p.x;
+    World_position.y   = p.y;
+    World_position.yaw = p.yaw;
 
     return World_position;
 }
@@ -78,6 +64,6 @@ World_Dir_t World_position_get(void)
  *     obsolete/imu660/Nav_position_INS_reference.c
  * 以后若接入带原始 IMU 数据的传感器, 可从那里取回。
  *
- * 现在定位只用上面的编码器里程计 World_position_get(), 航向取自
+ * 现在定位只用 device/drv_wheel_odom.c 的 locator_wheel, 航向取自
  * hwt_imu.h 的 g_hwt_imu_yaw_rad。
  * ============================================================ */

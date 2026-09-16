@@ -115,7 +115,7 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
   /* Infinite loop */
-  // uint8_t tx_buf[]="#100+222_300$\r\n";
+  uint8_t tx_buf[]="#100+222_300$\r\n";
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);
   for(;;)
   {
