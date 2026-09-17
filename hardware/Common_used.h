@@ -58,6 +58,7 @@
  * 5. 硬件驱动模块
  * ============================================================ */
 #include "emm_5v.h"
+#include "Send_motor.h"
 #include "oled.h"
 #include "oled_data.h"
 /*
@@ -150,7 +151,7 @@ void Uart1_DMA_IDLE_Start(void);
 void shell_print(uint8_t *x);        /* 解析上位机电机数据 */
 void shell_print3(uint8_t *x);       /* 解析上位机语音数据 */
 void Send_commendyu(void);           /* 发送电机命令 */
-void Send_commandmotor(MecanumResult *data); /* 发送电机命令（麦轮） */
+/* Send_commandmotor() 原型已收归 hardware/Send_motor.h，见上方 include。 */
 void Servo_SetAngle(float Angle);
 void UART3_Send(uint8_t *DATA, uint8_t len);
 void Guan_dao(float DT);

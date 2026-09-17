@@ -262,7 +262,7 @@ uint8_t Mecanum_Read_AllPositions(EncoderData *enc, uint32_t timeout_ms)
  *    2. 右移 ~1m (TBOP 检测), 记录编码器增量 → scale_y
  * ================================================================ */
 
-extern void Send_commandmotor(MecanumResult *data);
+#include "Send_motor.h"   /* Send_commandmotor 原型（V1.3.0 由手写 extern 收归） */
 
 /* TBData_t / TB_position 由 uart2_tbop10.h 提供 */
 
