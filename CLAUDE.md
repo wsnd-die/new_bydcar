@@ -50,6 +50,11 @@ obsolete/   已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/），�
 > `algorithm/`，`wit_protocol` 移入 `obsolete/`。`hardware/` 仍有 30 个文件，其中
 > `ColorIdentif.c`（比赛槽位表）、`trace_tune.c`（在线调参）按本规范并不属硬件驱动层，
 > 以及 `Common_used.h` 这一聚合头，**均尚未处理**。
+>
+> V1.4.0 接入了任务调度层（`app/worker_task.c` 的 `FC_TASK` / `NLF_TASK` +
+> `Core/Src/app_freertos.c` 的调度器）。此前全工程只有一个空循环任务，应用代码
+> 被 `--gc-sections` 整段回收、根本没进 `.elf`。**但流程入口与驱动源仍空**：
+> `task_send()` 零调用，`NLF_RunFlow()` 只写死了 Mode → 执行体的映射。
 
 | 规范中的名字 | 仓库现状 | 说明 |
 |---|---|---|
@@ -264,6 +269,29 @@ active_locator->get_pose(&robot_pose);
 ---
 
 ## 变更日志（持续追加）
+
+#### V1.4.0 - 2026-09-17
+- **修改类型**：新增（接通任务调度层）
+- **涉及模块**：应用层 / `Core/Src/app_freertos.c`、新增 `app/worker_task.c`、`app/worker_task.h`；配置 / `Core/Inc/FreeRTOSConfig.h`
+- **修改内容**：本工程此前**只有 `defaultTask` 一个空循环任务**（`osDelay(1)`）。`osThreadNew` 在全部 5 个提交里都只出现一次；`task_init()` / `task_send()` / `task_recive()` / `systemEventQueue` **全仓库零调用**；`FC_TASK` / `NLF_TASK` 只存在于注释中（`app/banyuntask.h:6,22`、`hardware/Common_used.h:138`），从初始提交起就未实现。本次按 `app/banyuntask.h` 文件头写明的架构（**驱动源 → defaultTask 调度器 → Worker 任务**）补齐：
+  1. **`defaultTask` 改为事件调度器**：`task_recive()` 阻塞收事件 → `NLF_Request(Mode)` 转交 Worker；自身不做任何阻塞式工作。保留原有 PE0 拉低上电动作；顺带移除未使用的 `tx_buf`，消除该文件一处 `-Wunused-variable`。
+  2. **新增 `app/worker_task.c/h`**，实现两个 Worker：
+     - **`FC_TASK`**（10ms 周期，`osPriorityAboveNormal`）：按 `app/NavigationMecanum.c:184-195` 的既有契约实现角度环。`g_angle_ctrl_enable` **上升沿**调 `Angle_SetTarget()` 复位 PID，之后每拍 `Angle_UpdateTarget()` 连续追踪，`Angle_Update()` 输出的 `cmd_w` 经 `Mecanum_Calc(0, cmd_w)` 下发；**下降沿主动下发零速**——调用方的 `osDelay(20)`「等 FC_TASK 停止输出」等的就是这个。同时承担 HWT906 的周期刷新（全工程周期最短的任务，由它统一 `HWT_IMU_Poll()`）。
+     - **`NLF_TASK`**（`osPriorityNormal`，4KB 栈）：线程标志唤醒，执行流程。
+  3. **补齐两个悬空全局量**：`g_angle_ctrl_enable` / `g_angle_target_yaw` 在 `app/worker_task.c` 定义。此前它们被 `NavigationMecanum.c` 引用却全工程无定义，因整个 `app/` 被 `--gc-sections` 回收才未暴露成链接错误。
+  4. **`configTOTAL_HEAP_SIZE` 3072 → 16384**：原值只够 `defaultTask` 一个线程（栈 512B）+ 空闲任务，加入 Worker 后 `osThreadNew` 会返回 NULL **且不报任何错**，表现为任务静默不跑。
+- **影响范围**：**这是本工程第一次让应用代码真正参与运行**。此前 `app/`、`algorithm/`、`hardware/` 的绝大多数函数被链接器回收，`.elf` 只含 HAL + FreeRTOS + libc + `main` + ISR 可达路径。本次 FLASH `44532 → 64084`（+19.5KB），RAM `10704 → 25104`（+14.4KB）。**业务层函数签名一律未改，兼容升级。**
+- **验证状态**：
+  1. 编译链接通过，无 error、**无新增 warning**（仅剩 `ColorIdentif.c` / `oled_data.c` 的既有告警）；
+  2. `nm` 确认 `FC_Task` / `NLF_Task` / `Mecanum_Calc` / `PID_calc` / `HWT_IMU_Poll` / `Send_commandmotor` / `Angle_Update` / `Trace_LineFollow` / `Circle_Follow` / `Nav_RunWaypoints` / `Emm_V5_Vel_Control` 等此前**全部不在符号表内**的函数，本次均已进入 `.elf`；`nm -u` 为空，无未解析符号；
+  3. `ucHeap` 实测 `0x4000` = 16384 B，堆大小改动生效；
+  4. **尚未上车验证运行时行为。** 堆实际是否够用、`FC_TASK` 周期是否被 `Send_commandmotor()` 内的 `osDelay(5)` 拖长、角度环整定在实测 dt 下是否仍然合适，均需硬件确认。
+- **备注**：
+  1. **流程入口未接**：`NLF_RunFlow()` 只写死了 Mode → 执行体的映射（`Event_LinFolL/LinFolR`→`Trace_LineFollow`、`Event_FindCircle`→`Circle_Follow`、`Event_Navigation/GoHome`→`Nav_RunWaypoints`、`Event_STOP`→关角度环）。**整条流程的顺序编排、以及第一个事件由谁触发，尚未确定**；`Event_QRCode` / `Event_PickUp` / `Event_PlaceDown` / `Event_STEERING_ROTATE` 四个分支留空待接（各自的执行体 `SetQR()`、`BlockBasic_LiftTo()`、`BL_Update()`、`BlockBasic_TurntableTo()` 都已存在，缺的是入参来源）。
+  2. **驱动源仍未接队列**：`task_send()` 目前仍是**零调用**。ISR 侧（`hardware/QRcode.c` 的 `HAL_UART_RxCpltCallback` 等）只置裸标志（`QR_Flag`），需由一个轮询任务翻译成事件。注意 `task_send()` 用的是 `xQueueSend` 而非 `xQueueSendFromISR`，**不能在中断里直接调用**。
+  3. **角速度靠差分**：HWT906 只输出欧拉角、无原始角速度（见 `hardware/hwt_imu.h:10-13`），`AngleLoop_Update()` 需要的 `cur_w` 只能由 yaw 差分得到。`FC_TASK` 内用**实测 dt** 而非 `FC_TASK_PERIOD_MS` 常量补偿，因为 `Send_commandmotor()` 内含 `osDelay(5)`，实际周期会大于 10ms。
+  4. **建议后续开启 `configCHECK_FOR_STACK_OVERFLOW` 并实现 `vApplicationStackOverflowHook`**：本工程刚接入任务，栈溢出目前是完全静默的，与 `osThreadNew` 返回 NULL 一样难以察觉。
+  5. V1.3.0 遗留未做项（`Common_used.h` 拆解、`trace_tune` 迁出至 `debug/`、`app/` 内业务模块归位）本次**仍未动**。
 
 #### V1.3.0 - 2026-09-17
 - **修改类型**：新增 + 优化（分层归位，代码逻辑一行未改）

@@ -26,6 +26,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include "Common_used.h"    /* 工程聚合头: FreeRTOS / HAL / 各业务模块 */
+#include "worker_task.h"    /* FC_Task / NLF_Task / NLF_Request */
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,6 +48,23 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+
+/* Worker 任务属性。句柄 (fcTaskHandle / nlfTaskHandle) 定义在 app/worker_task.c,
+ * 因为调度器要通过它们给任务发线程标志。 */
+
+/* FC_TASK: 10ms 角度环, 必须能抢占阻塞式流程任务, 否则控制周期会被拉长 */
+const osThreadAttr_t fcTask_attributes = {
+  .name = "FC_TASK",
+  .priority = (osPriority_t) osPriorityAboveNormal,
+  .stack_size = FC_TASK_STACK_WORDS * 4
+};
+
+/* NLF_TASK: 流程任务, 大部分时间阻塞在导航/循迹里 */
+const osThreadAttr_t nlfTask_attributes = {
+  .name = "NLF_TASK",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = NLF_TASK_STACK_WORDS * 4
+};
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -72,6 +92,10 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
+  /* 建系统事件队列。必须在创建任何任务之前 —— 调度器的 task_recive()
+   * 依赖 systemEventQueue, 而它由本函数创建 (此前从未被调用, 故为 NULL)。 */
+  task_init();
+
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -95,7 +119,10 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* Worker 任务。架构: 驱动源 → defaultTask 调度器 → Worker 任务,
+   * 见 app/banyuntask.h 与 app/worker_task.h。 */
+  fcTaskHandle  = osThreadNew(FC_Task,  NULL, &fcTask_attributes);
+  nlfTaskHandle = osThreadNew(NLF_Task, NULL, &nlfTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -114,13 +141,21 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* Infinite loop */
-  uint8_t tx_buf[]="#100+222_300$\r\n";
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);
+  /* 事件调度器: 阻塞等事件, 按 Mode 转交 Worker 任务执行。
+   *
+   * 本任务刻意不承担任何阻塞式工作 —— 它一旦跑去导航, 就收不到后续事件了。
+   * 真正的执行体在 NLF_TASK (app/worker_task.c)。
+   *
+   * 原实现是个 osDelay(1) 空循环, 从未调用过 task_recive(); 配合 task_init()
+   * 从未被调用, 整个事件队列机制在此之前是空转的。 */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);   /* 保留原有上电动作 */
+
   for(;;)
   {
-    // HAL_UART_Transmit_DMA(&huart2,tx_buf,sizeof(tx_buf));
-    osDelay(1);
+    TaskCommand_t cmd = task_recive();
+    if (cmd.k) {
+      NLF_Request(cmd.Mode);
+    }
   }
   /* USER CODE END StartDefaultTask */
 }
