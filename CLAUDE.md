@@ -37,24 +37,40 @@
 当前仓库结构：
 
 ```
-app/        应用层 + 部分业务层（banyuntask.c、NavigationMecanum.c、BollLocator.c、Mecanum_Move.c、GrayTrace.c）
-algorithm/  业务层（Nav_position.c 轮式里程计、mecanum.c、pid.c、angle_ctrl.c、Trace_base.c、Circle_base.c）
-hardware/   硬件驱动层（hwt_imu.c、k230.c、emm_v5.c、Send_motor.c、oled.c、sw_uart.c、uart2_tbop10.c …）
-device/     抽象设备层 —— 接口 + locator_wheel 实现（OPS9/光流尚未接入）
-Core/       CubeMX 生成（main.c、app_freertos.c、外设初始化）
-uart/       msp_uart2.c
-obsolete/   已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/），不在任何 CMake glob 内，不参与编译
+app/              应用层：任务调度（banyuntask、worker_task）、比赛策略（ColorIdentif）
+                  ＋ 尚待下沉的业务模块（NavigationMecanum、BollLocator、Mecanum_Move）
+algorithm/        业务层：mecanum、pid、angle_ctrl、Circle_base、Nav_position
+device/           抽象设备层：PoseData_t + LocatorDev_t 接口 ＋ locator_wheel 实现（OPS9/光流尚未接入）
+hardware/         硬件驱动层，按器件类型细分：
+  ├─ sensors/       hwt_imu、grayscale、color、collect_ir、k230、QRcode
+  ├─ actuators/     emm_v5、Send_motor、block_basic
+  ├─ display/       oled、oled_data
+  ├─ bus/           sw_uart、uart2_tbop10
+  └─ Common_used.h  工程公共头（只聚合 libc + HAL + FreeRTOS）
+debug/            调试工具目录（当前为空 —— 原在线调参工具 trace_tune 已随循迹功能删除）
+config/           参数配置目录（已建，param_config.h 待第 7.3 节落地）
+Core/             CubeMX 生成（main.c、app_freertos.c、外设初始化）
+uart/             msp_uart2.c
+obsolete/         已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/），不在任何 CMake glob 内，不参与编译
 ```
 
-> V1.3.0 已做一轮分层归位：`pid` / `angle_ctrl` / `Trace_base` / `Circle_base` 由 `hardware/` 迁入
-> `algorithm/`，`wit_protocol` 移入 `obsolete/`。`hardware/` 仍有 30 个文件，其中
-> `ColorIdentif.c`（比赛槽位表）、`trace_tune.c`（在线调参）按本规范并不属硬件驱动层，
-> 以及 `Common_used.h` 这一聚合头，**均尚未处理**。
+> V1.3.0 做了一轮分层归位（`pid` / `angle_ctrl` / `Trace_base` / `Circle_base` 迁入 `algorithm/`，
+> `wit_protocol` 移入 `obsolete/`）。V1.5.0 做了第二轮：`hardware/` 按器件类型细分，
+> `ColorIdentif` 归入 `app/`，`trace_tune` 移入新的 `debug/`，并**拆掉了 `Common_used.h`
+> 这一聚合头** —— 它此前使 include 图退化成完全图，是第 1 节解耦要求失效的根因。
 >
 > V1.4.0 接入了任务调度层（`app/worker_task.c` 的 `FC_TASK` / `NLF_TASK` +
 > `Core/Src/app_freertos.c` 的调度器）。此前全工程只有一个空循环任务，应用代码
 > 被 `--gc-sections` 整段回收、根本没进 `.elf`。**但流程入口与驱动源仍空**：
 > `task_send()` 零调用，`NLF_RunFlow()` 只写死了 Mode → 执行体的映射。
+>
+> V1.6.0 **移除了整个循迹功能**（`GrayTrace` / `Trace_base` / `trace_tune` 共 6 个文件），
+> 只保留 K230 找圆与导航。V1.5.0 遗留的 ② `trace_tune` 双向耦合、③ `QRcode.c` 中断
+> 回调硬编码分流，随之消失。
+>
+> **仍待处理**（按优先级）：① `app/` 内三个业务模块向 `algorithm/` 的下沉（需先定义
+> 位姿输入 / 底盘输出 / 阻塞旋转 / 计时四个注入式接口）；② `config/param_config.h`
+> 的参数收拢；③ 确认 `grayscale.c` / `k230.c` 里失去调用者的驱动 API 是否还要保留。
 
 | 规范中的名字 | 仓库现状 | 说明 |
 |---|---|---|
@@ -255,54 +271,32 @@ active_locator->get_pose(&robot_pose);
 
 ## 8. 构建说明（容易被忽略）
 
-`CMakeLists.txt:71` 用 `file(GLOB ... CONFIGURE_DEPENDS)` 收集源码，加入的目录为：
-`Core/Src`、`app`、`algorithm`、`hardware`、`device`。
+源码收集用 `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)`（V1.5.0 起，此前是 `GLOB`），
+顶层目录为：`Core/Src`、`app`、`algorithm`、`hardware`、`device`、`debug`、`config`。
 
-**新建 src 目录时必须同时改两处，否则新代码不参与编译：**
-
-1. `CMakeLists.txt` 的 `APP_SOURCES` glob 列表；
-2. `CMakeLists.txt` 的 `target_include_directories` 列表。
+- **在已有顶层目录下再建子目录**（如在 `hardware/` 下加 `imu/`）：**无需改 CMake**，
+  `GLOB_RECURSE` 会自动收集；但若新子目录里的 `.c` 要 `#include` 同目录的头，
+  仍需把该子目录加进 `target_include_directories`（include 路径没有递归形式）。
+- **新建顶层层目录**：必须同时改两处，否则新代码不参与编译 ——
+  1. `CMakeLists.txt` 的 `APP_SOURCES` glob 列表；
+  2. `CMakeLists.txt` 的 `target_include_directories` 列表。
 
 工程必须用 ARM 交叉工具链编译（`cmake --preset Debug`），用宿主 MinGW 编译会在
 `CMakeLists.txt:25` 直接 `FATAL_ERROR`。
 
+> **查告警一律用 `cmake --build --preset Debug --clean-first`。**
+> 增量构建只重编改动过的文件，会漏掉本次改动引入的告警 —— V1.5.0 就因此漏检了
+> 两处 `-Wimplicit-function-declaration`（隐式声明会被静默按 `int` 处理返回值，
+> 只报 warning 不报 error）。
+
+> **验证重构有没有改变行为，标准做法是比对目标文件而非 `.elf`。**
+> `.elf` 会被 `-Wl,--gc-sections` 裁剪，未被引用的模块根本不在其中（见 V1.3.0 备注），
+> 大小相同可能只是因为双方都没被链接。可靠做法：两次构建分别对全部 `.obj` 执行
+> `objcopy --strip-debug` 后逐字节比对（剥调试信息是因为搬动源文件会改变 DWARF 里的路径）。
+
 ---
 
 ## 变更日志（持续追加）
-
-#### V1.4.4 - 2026-09-17
-- **修改类型**：修复
-- **涉及模块**：应用层 / 重建 `app/worker_task.c`、`app/worker_task.h`；硬件驱动层 / 重建 `hardware/Send_motor.h`
-- **修改内容**：**恢复 V1.3.0 / V1.4.0 声称新增、但从未真正入库的两个文件**。经 `git show` 核对：V1.4.0 提交（`1688951`）只包含 `CLAUDE.md`、`FreeRTOSConfig.h`、`app_freertos.c` 三处改动，其提交说明与变更日志中声称"新增 `app/worker_task.c/h`"的文件不在 diff 内；V1.3.0 提交（`9f690c2`）同样声称"新建 `hardware/Send_motor.h`"，diff 内亦无此文件。因此 HEAD 本身就无法编译：`app_freertos.c:30` 引用 `worker_task.h`（FC_Task/NLF_Task/NLF_Request/task_init），`Common_used.h:61` 引用 `Send_motor.h`。本次按两个提交日志写明的规格重建：
-  1. `hardware/Send_motor.h`：`Send_commandmotor(MecanumResult *)` 原型单一出处（与 V1.3.0 日志描述一致）；
-  2. `app/worker_task.c/h`：`FC_TASK`（10ms 角度环 + HWT906 刷新，实测 dt 差分角速度，上升沿 `Angle_SetTarget()` / 下降沿零速，与 V1.4.0 日志描述一致）、`NLF_TASK`（线程标志唤醒 + Mode→执行体映射，四个分支留空待接）、`NLF_Request()`、句柄 `fcTaskHandle`/`nlfTaskHandle`、栈宏 `FC_TASK_STACK_WORDS=256`（1KB，日志未规定，取保守值）/`NLF_TASK_STACK_WORDS=1024`（4KB，日志规定）。
-- **影响范围**：**HEAD 由不可编译恢复为可编译**。重建代码按日志规格实现，**与丢失的原文件非字节一致**。编译期行为与 V1.4.0 日志记录吻合：`task_send()` 仍零调用（被 `--gc-sections` 回收），流程入口仍留空。
-- **验证状态**：已验证。`cmake --preset Debug` + `cmake --build --preset Debug` 通过，无 error；`nm` 确认 `FC_Task`/`NLF_Task`/`NLF_Request`/`Mecanum_Calc`/`Send_commandmotor`/`Angle_Update`/`HWT_IMU_Poll`/`Trace_LineFollow`/`Circle_Follow`/`Nav_RunWaypoints`/`task_init`/`task_recive` 均进 `.elf`，`nm -u` 为空；`text 63712 / data 1008 / bss 23816`，与 V1.4.0 记录的 `64084 / 25104` 基本吻合。**尚未上车验证运行时行为。**
-- **备注**：兼容升级。FC_TASK 栈大小（1KB）为重建时取值，若实测栈不够可改 `FC_TASK_STACK_WORDS`。建议尽快把本次重建的两个文件提交入库，避免再次丢失。
-
-#### V1.4.3 - 2026-09-17
-- **修改类型**：修复
-- **涉及模块**：构建配置 / `CMakeLists.txt`
-- **修改内容**：移除未提交工作区中重复加入的 `device/OPS_9.c/h`、`device/HWT906.c/h`（`STARTUP_SOURCE` 与 `FREERTOS_SOURCES` 各一份）。`device/*.c` 已在 `APP_SOURCES` glob（`CMakeLists.txt:84-89`）内，重复列出会让同一源文件编译多份、链接时报重复符号。
-- **影响范围**：仅构建配置，`device/` 新驱动仍正常参与编译（经 glob）。无功能影响。
-- **验证状态**：已验证（构建通过，无重复符号报错）
-- **备注**：兼容升级。`device/` 目录在 glob 与 include 路径中均已存在（V1.1.0），新增 device 源文件无需改 CMake。
-
-#### V1.4.2 - 2026-09-17
-- **修改类型**：修复
-- **涉及模块**：构建系统 / `STM32G491VETx_FLASH.ld`
-- **修改内容**：移除 `.ARM.extab` / `.ARM` / `.preinit_array` / `.init_array` / `.fini_array` 五个段定义里的 `READONLY` 关键字。`READONLY` 段属性是 binutils 2.37 才支持的语法；本机工具链为 xpack gcc-arm-none-eabi 10.3（binutils 2.36.1），ld 把 `(READONLY)` 当作段地址表达式解析，报 `non constant or forward reference address expression for section .ARM.extab`。这些段全部落在 `>FLASH`（rx 区），去掉该关键字后布局与属性不变。
-- **影响范围**：仅链接脚本语法，段布局不变。新老 binutils 均可链接。
-- **验证状态**：已验证（构建通过，链接产物正常生成）
-- **备注**：兼容升级。若后续换回 STM32CubeCLT（binutils ≥2.37）工具链，本改动同样有效。
-
-#### V1.4.1 - 2026-09-17
-- **修改类型**：修复
-- **涉及模块**：构建系统 / `cmake/gcc-arm-none-eabi.cmake`
-- **修改内容**：工具链搜索列表新增 `E:/Tools/xpack-arm-none-eabi-gcc/*/bin`（带通配符，升级版本号无需再改）。此前只搜 `C:/ST`、`D:/STM32CubeCLT*`、`C:/Program Files/STMicroelectronics` 三个 STM32CubeCLT 位置，本机工具链实际在 `E:/Tools/xpack-arm-none-eabi-gcc/gcc-arm-none-eabi-10.3-2021.10/bin`，导致 configure 直接 FATAL_ERROR：`arm-none-eabi toolchain not found`。
-- **影响范围**：仅工具链探测。找到 STM32CubeCLT 时行为不变；找不到时多一个候选路径。
-- **验证状态**：已验证（configure 通过，编译链接全流程跑通）
-- **备注**：兼容升级。临时绕行方式仍可用：`cmake --preset Debug -DARM_TOOLCHAIN_PATH=<bin 目录>`。
 
 #### V1.4.0 - 2026-09-17
 - **修改类型**：新增（接通任务调度层）

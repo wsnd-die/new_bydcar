@@ -3,7 +3,7 @@
  * @brief   通用 PID — 位置式 / 增量式 / 积分分离增量式
  */
 #include "Common_used.h"
-
+#include "pid.h"
 #define LIMIT_MAX(input, max)   \
     do {                        \
         if ((input) > (max))    \

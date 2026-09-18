@@ -1,5 +1,8 @@
 #include "Common_used.h"
-#include "trace_tune.h"
+#include "QRcode.h"
+#include "k230.h"
+#include "color.h"
+#include "ColorIdentif.h"
 
 static uint8_t qrcode_rx_byte;
 static uint8_t qrcode_rx_buf[QRCODE_RX_BUF_SIZE];
@@ -110,16 +113,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 
     if (huart->Instance == USART1) {
-        /* 串口1 调参命令 ('#' 行) 分流, 不进入 QR 处理 */
-        if (Trace_Tune_OnByte(qrcode_rx_byte)) {
-            HAL_UART_Receive_IT(&huart1, &qrcode_rx_byte, 1);
-            return;
-        }
-        /* GrayTrace 灰度循迹调参 ('$' 行): $egain / $ffgain / $get */
-        if (GrayTrace_Tune_OnByte(qrcode_rx_byte)) {
-            HAL_UART_Receive_IT(&huart1, &qrcode_rx_byte, 1);
-            return;
-        }
+        /* 注: V1.6.0 前这里还有两级调参命令分流 (# 行给 trace_tune, $ 行给
+         * GrayTrace)。两个循迹模块连同它们的调参工具已整体移除, 故一并删掉 ——
+         * 驱动层的中断回调不应依赖调试/业务模块。 */
         if (qrcode_rx_len >= QRCODE_RX_BUF_SIZE) {
             qrcode_rx_len = 0;
         }

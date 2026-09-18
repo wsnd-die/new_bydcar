@@ -4,7 +4,8 @@
 #ifndef STM32G4_TEST_NAV_POSITION_H
 #define STM32G4_TEST_NAV_POSITION_H
 
-#include "Common_used.h"
+#include <stdint.h>
+#include "NavigationMecanum.h"   /* World_Dir_t */
 
 /* ============================================================
  * 【兼容适配层】—— 新代码请勿使用本文件的接口

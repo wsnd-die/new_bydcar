@@ -1,5 +1,11 @@
 #include "Common_used.h"
-
+#include "NavigationMecanum.h"
+#include "Mecanum_Move.h"
+#include "hwt_imu.h"
+#include "worker_task.h"
+#include "mecanum.h"
+#include "Send_motor.h"
+#include "Nav_position.h"
 /* ============================================================
  * 全局变量
  * ============================================================ */

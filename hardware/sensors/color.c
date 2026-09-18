@@ -5,6 +5,8 @@
  *   - USE_OPENMV_COLOR 1: OpenMV, 帧: AA CC L A B BB DD (Lab 值, OpenMV 端采集)
  */
 #include "Common_used.h"
+#include "color.h"
+#include "uart2_tbop10.h"
 #include <stdlib.h>  /* abs() */
 
 /* ---- 内部参数 ---- */

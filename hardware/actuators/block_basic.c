@@ -4,7 +4,9 @@
  * @note    车型 1 使用丝杆机构；车型 2 使用双机械臂机构。
  */
 #include "Common_used.h"
-
+#include "block_basic.h"
+#include "emm_5v.h"
+#include "Mecanum_Move.h"
 #define CLAMP_FLOAT(v, lo, hi)  ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define DEG2RAD(d)              ((d) * 0.01745329252f)
 #define RAD2DEG(r)              ((r) * 57.2957795131f)

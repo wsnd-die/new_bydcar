@@ -15,7 +15,8 @@
 #ifndef COLOR_IDENTIF_H
 #define COLOR_IDENTIF_H
 
-#include "Common_used.h"
+#include <stdint.h>
+#include "color.h"               /* Color_TypeDef */
 
 /* ============================================================
  * 槽位

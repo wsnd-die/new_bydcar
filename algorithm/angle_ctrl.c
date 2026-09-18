@@ -4,7 +4,8 @@
  *          仅维持目标角度，不做位置导航
  */
 #include "Common_used.h"
-
+#include "angle_ctrl.h"
+#include "pid.h"
 #define CLAMP(v,lo,hi)  ((v)<(lo)?(lo):((v)>(hi)?(hi):(v)))
 #define DT              0.01f
 

@@ -4,6 +4,7 @@
  */
 #include "Common_used.h"
 #include "collect_ir.h"
+#include "uart2_tbop10.h"
 
 static bool ir_last = false;   /* 上一采样是否遮挡 (true=遮光) */
 

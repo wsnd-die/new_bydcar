@@ -7,6 +7,7 @@
 
 #include "Common_used.h"
 #include "ColorIdentif.h"
+#include "block_basic.h"
 
 /* ============================================================
  * 全局
