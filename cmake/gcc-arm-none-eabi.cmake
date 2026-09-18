@@ -16,7 +16,8 @@ set(CMAKE_SYSTEM_PROCESSOR arm)
 if(NOT DEFINED ARM_TOOLCHAIN_PATH)
   file(GLOB CUBECLT_CANDIDATES "C:/ST/STM32CubeCLT*/GNU-tools-for-STM32/bin"
                                "D:/STM32CubeCLT*/GNU-tools-for-STM32/bin"
-                               "C:/Program Files/STMicroelectronics/STM32Cube/STM32CubeCLT*/GNU-tools-for-STM32/bin")
+                               "C:/Program Files/STMicroelectronics/STM32Cube/STM32CubeCLT*/GNU-tools-for-STM32/bin"
+                               "E:/Tools/xpack-arm-none-eabi-gcc/*/bin")
   list(SORT CUBECLT_CANDIDATES)
   list(REVERSE CUBECLT_CANDIDATES)
   foreach(candidate IN LISTS CUBECLT_CANDIDATES)
