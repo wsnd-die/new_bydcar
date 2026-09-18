@@ -298,6 +298,63 @@ active_locator->get_pose(&robot_pose);
 
 ## 变更日志（持续追加）
 
+#### V1.6.0 - 2026-09-18
+- **修改类型**：删除（移除整个循迹功能）
+- **涉及模块**：业务层 / `algorithm/`；应用层 / `app/`；调试 / `debug/`；硬件驱动层 / `hardware/sensors/QRcode.c`
+- **修改内容**：按用户决定，**整体移除循迹功能**，共删除 6 个文件：
+  1. **`app/GrayTrace.c/h`**（灰度循迹，8 路灰度传感器）。它本就是**死代码** —— `GrayTrace_Update` / `GrayTrace_Update_two` 全仓库零调用者，`$egain/$ffgain` 调参通道收得到字节但永远不被消费。实车跑的是 K230 视觉循迹，不是这条。
+  2. **`algorithm/Trace_base.c/h`**（循迹底盘控制，PID / Stanley 两套控制器）。它是活的（经 `NLF_RunFlow` → `Trace_LineFollow`），随功能整体移除。
+  3. **`debug/trace_tune.c/h`**（在线调参工具，375 行）。**这是删除前两个的连带结果，非独立决定**：它调的全部参数（`g_tune_angle_*` → `Trace_base` 的 `g_pid_angle`、`g_tune_pos_*` → `g_pid_pos`、`g_tune_gray_*` → `GrayTrace` 的 `g_pid_gray`）都属于被删的两个模块，且它的两个调用者 `Trace_Tune_Service` / `Trace_Tune_Record` 只在 `Trace_base.c` 里被调。两个模块一删，它成为**零消费者、零调参对象**的空壳，且因 `extern pid_type_def g_pid_*` 悬空而无法链接。`debug/` 目录保留待将来放别的调试工具。
+- **连带清理**：
+  - `hardware/sensors/QRcode.c`：删除对 `Trace_Tune_OnByte` / `GrayTrace_Tune_OnByte` 的 include 与两级中断分流。**驱动层的中断回调不再依赖调试/业务模块**（V1.5.0 备注 4 遗留项之一，就此解决）。
+  - `app/worker_task.c`：删除 `Trace_base.h` include 与 `NLF_RunFlow()` 里 `Event_LinFolL` / `Event_LinFolR` → `Trace_LineFollow()` 的分支。
+  - `banyuntask.h` 的 `Event_LinFolL` / `Event_LinFolR` **枚举值保留未动** —— 它们是事件词汇表，将来换别的循迹方案时在 `NLF_RunFlow()` 接一个新分支即可。
+- **影响范围**：循迹功能整体消失，仅保留 K230 找圆（`Circle_Follow`）与导航（`Nav_RunWaypoints`）。`.elf` 由 `text 44792 / data 476 / bss 23556` 变为 `text 44532 / data 476 / bss 23492`（-260 B）。**注意减幅很小，因为当前 `osThreadNew` 未创建 Worker 任务，应用层整体仍被 `--gc-sections` 回收** —— 不能据此判断删除的影响面。
+- **验证状态**：已验证。
+  1. `cmake --build --preset Debug --clean-first` 全量重编，无 error；**无新增 warning**（仅剩 `ColorIdentif.c` 两处、`oled_data.c` 三处既有告警）；
+  2. `nm` 确认 `Trace_LineFollow` / `Trace_Tune_OnByte` / `GrayTrace_Update` / `g_pid_angle` / `g_pid_gray` / `g_tune_angle_kp` 均已不在符号表中；`nm -u` 为空；
+  3. 全仓库 grep 确认除注释里的说明性文字外，无残留引用。
+- **备注**：
+  1. **不兼容升级**（功能层面）：依赖循迹的调用方需要改用其他方案。对**已保留模块的接口**无影响。
+  2. **`hardware/sensors/grayscale.c` 与 `k230.c` 的部分导出函数失去调用者**：`Grayscale_Serial_Read` / `Grayscale_Update` / `K230_GetLineAngle` / `K230_GetPosition` 此前只被 `GrayTrace.c` / `Trace_base.c` 调用。它们是非 static 的驱动 API，不会产生 warning，**本次保留未删** —— 若确认不再需要，可另行清理。
+  3. V1.5.0 遗留项 ②（`trace_tune` ↔ `Trace_base` 的双向裸全局耦合）与 ③（`QRcode.c` 中断回调硬编码调参分流）**随本次删除一并消失**，问题不再存在。
+  4. 仍需处理：`app/` 内业务模块（`BollLocator` / `Mecanum_Move` / `NavigationMecanum`）向 `algorithm/` 的下沉；`config/param_config.h` 的参数收拢。
+
+#### V1.5.0 - 2026-09-18
+- **修改类型**：优化（分层归位第二轮）+ 重构（拆解聚合头）
+- **涉及模块**：构建 / `CMakeLists.txt`；硬件驱动层 / `hardware/` 全部；应用层 / `app/`；调试 / 新增 `debug/`；文档 / `CLAUDE.md`
+- **修改内容**：代码逻辑一行未改，全部是**位置调整 + include 显式化**。
+  1. **`hardware/` 按器件类型分子目录**（此前 30 个文件平铺）：
+     `sensors/`（hwt_imu、grayscale、color、collect_ir、k230、QRcode）、
+     `actuators/`（emm_v5、Send_motor、block_basic）、
+     `display/`（oled、oled_data）、
+     `bus/`（sw_uart、uart2_tbop10）。
+  2. **新增 `debug/` 目录**，`trace_tune.c/h` 由 `hardware/` 迁入。它是在线调参工具，不属四层中的任何一层。
+  3. **`ColorIdentif.c/h` 迁入 `app/`**。它内容是 QR 序号 → 槽位映射表与旋转进度推进，属**比赛策略**而非硬件驱动。
+  4. **拆解 `hardware/Common_used.h` 聚合头**（本轮最重要的一项）：
+     - 该文件此前把全部 hardware 头、`../algorithm/mecanum.h`、以及全部 app 层头（banyuntask / Mecanum_Move / NavigationMecanum / Nav_position / GrayTrace）一次性 include 进来，使 include 图退化成**完全图** —— 任何一层的任何文件都能看见其它层的任何符号，第 1 节的「驱动与业务完全解耦」形同虚设；
+     - 现瘦身为**只聚合底座**：libc + HAL/CMSIS + FreeRTOS/CMSIS-RTOS2 + CubeMX 外设句柄（`gpio/dma/fdcan/i2c/spi/tim/usart.h`，它们是 HAL 层设施，不属四层中的任何一层，保留可免去每个文件重复写一长串）；
+     - **13 个 .c 各自补上真正依赖的模块头**（如 `Trace_base.c` 补 `Trace_base.h` —— 它此前连自己的头都没 include，靠聚合头顺带拉进来）。
+     - 删除 **12 个全工程无定义的悬空 extern**（`FlagOFMotor` / `FlagOFYuyin` / `Data_uart1` / `Data_uart3` / `buffer` / `buffer_flag` / `buf` / `data_angle` 及 `Uart3_deel` / `Uart1_DMA_IDLE_Start` / `shell_print` / `shell_print3` / `Send_commendyu` / `UART3_Send` / `Guan_dao` —— 整套 UART3/语音子系统已不存在，只剩声明）；
+     - 删除零引用的 `arm_math.h`、`use_xing_che`、`ni_he_mode`、`RX_BUF_SIZE`、`DEG_TO_RAD`、`RAD_TO_DEG`。
+     - `g_angle_ctrl_enable` / `g_angle_target_yaw` 的 extern 移入 `app/worker_task.h`（其定义处所在模块）。
+  5. **3 个"间接 include 聚合头"的头文件一并修正**：`app/BollLocator.h`、`algorithm/Nav_position.h`、`app/ColorIdentif.h` 改为各自只 include 真正需要的头。
+  6. **`CMakeLists.txt` 改为 `GLOB_RECURSE`**，并纳入 `debug/`、`config/`（`config/` 目录已建，`param_config.h` 待第 7.3 节落地）。今后在 `hardware/` 下再分目录无需改 CMake；新增**顶层**层目录仍需同时改 glob 与 include 路径两处。
+- **影响范围**：**无功能影响**，接口签名一律未改。`hardware/` 由 30 个文件减为 1 个头文件 + 4 个子目录。
+- **验证状态**：已验证。
+  1. `cmake --build --preset Debug --clean-first` 全量重编，无 error；**无新增 warning**（仅剩 `ColorIdentif.c` 两处、`oled_data.c` 三处既有告警）；
+  2. `.elf` 为 `text 44792 / data 476 / bss 23556`，与改动前**完全一致**；
+  3. **目标文件级比对**：139 个 `.obj` 经 `objcopy --strip-debug` 后逐字节比对，**全部完全一致** —— 证明搬迁与拆解未改变任何代码生成；
+  4. **尚未上车验证运行时行为**（本次无行为改动，风险主要在上车后 include 是否齐全，但编译已覆盖）。
+- **备注**：
+  1. **兼容升级**，对上层无影响。
+  2. **本轮暴露的两个隐藏依赖**（均已修复）：
+     - `algorithm/mecanum.c` 用的 `PI` 常量**只定义在 CMSIS-DSP 的 `arm_math.h`** 里。为这一个数学常量而把整个 DSP 库拉进公共头是不合理的，已改用字面量 `3.14159265358979f`（与该宏原值一致）。**注意不要改成 `<math.h>` 的 `M_PI`** —— 它是 `double`，会让 `2.0f * MEC_WHEEL_RADIUS * M_PI` 整个表达式提升为双精度，既变慢又改变舍入。
+     - 补 include 时若遗漏各模块头，编译器会给出 `-Wimplicit-function-declaration` 并静默按 `int` 处理返回值（如 `BlockBasic_TurntableTo`、`can_SendCmd`），**不报 error 只报 warning**。
+  3. **查告警必须用 `--clean-first`**：本次曾用增量构建检查"无新增 warning"，因相关文件未重编而漏掉了两处隐式声明。增量构建的告警结论不可信。
+  4. **`debug/trace_tune.c` 与 `algorithm/Trace_base.c` 的双向裸全局耦合本轮未解**：`trace_tune.c:37-39` 用 `extern pid_type_def` 直接读写 `Trace_base.c` 的 `g_pid_angle` / `g_pid_pos`，`Trace_base.c` 反读 11 处 `g_tune_*` 三元表达式。只搬文件不拆这层耦合，等于把隐式依赖换个目录继续存在。同理 `hardware/sensors/QRcode.c:114,119` 在 USART1 中断回调里硬编码了 `Trace_Tune_OnByte` / `GrayTrace_Tune_OnByte` 两个调参分流 —— 驱动层依赖调试工具。**这两处留待后续单独处理。**
+  5. 本轮**未做**：`app/` 内业务模块（`BollLocator` / `GrayTrace` / `Mecanum_Move` / `NavigationMecanum`）向 `algorithm/` 的归位。探查结论：`Mecanum_Move.c` 是「算法 + 驱动」混杂（10 处 `Emm_V5_*` 直调），需按函数切；`BollLocator.c` 算法纯度最高（结构体传参、无全局表），只需把 `TB_position` / `imu_yaw` 裸读换成 `PoseData_t` 入参即可整体下沉；`NavigationMecanum.c` 是「通用规划 + 比赛编排 + 跨任务握手」三合一，需要先定义位姿输入 / 底盘输出 / 阻塞旋转 / 计时四个注入式接口才能切开。
+
 #### V1.4.0 - 2026-09-17
 - **修改类型**：新增（接通任务调度层）
 - **涉及模块**：应用层 / `Core/Src/app_freertos.c`、新增 `app/worker_task.c`、`app/worker_task.h`；配置 / `Core/Inc/FreeRTOSConfig.h`
