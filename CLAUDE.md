@@ -38,8 +38,8 @@
 
 ```
 app/              应用层：任务调度（banyuntask、worker_task）、比赛策略（ColorIdentif）
-                  ＋ 尚待下沉的业务模块（NavigationMecanum、BollLocator、Mecanum_Move、GrayTrace）
-algorithm/        业务层：mecanum、pid、angle_ctrl、Trace_base、Circle_base、Nav_position
+                  ＋ 尚待下沉的业务模块（NavigationMecanum、BollLocator、Mecanum_Move）
+algorithm/        业务层：mecanum、pid、angle_ctrl、Circle_base、Nav_position
 device/           抽象设备层：PoseData_t + LocatorDev_t 接口 ＋ locator_wheel 实现（OPS9/光流尚未接入）
 hardware/         硬件驱动层，按器件类型细分：
   ├─ sensors/       hwt_imu、grayscale、color、collect_ir、k230、QRcode
@@ -47,7 +47,7 @@ hardware/         硬件驱动层，按器件类型细分：
   ├─ display/       oled、oled_data
   ├─ bus/           sw_uart、uart2_tbop10
   └─ Common_used.h  工程公共头（只聚合 libc + HAL + FreeRTOS）
-debug/            在线调参工具（trace_tune），不属四层中的任何一层
+debug/            调试工具目录（当前为空 —— 原在线调参工具 trace_tune 已随循迹功能删除）
 config/           参数配置目录（已建，param_config.h 待第 7.3 节落地）
 Core/             CubeMX 生成（main.c、app_freertos.c、外设初始化）
 uart/             msp_uart2.c
@@ -64,10 +64,13 @@ obsolete/         已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/�
 > 被 `--gc-sections` 整段回收、根本没进 `.elf`。**但流程入口与驱动源仍空**：
 > `task_send()` 零调用，`NLF_RunFlow()` 只写死了 Mode → 执行体的映射。
 >
-> **仍待处理**（按优先级）：① `app/` 内四个业务模块向 `algorithm/` 的下沉（需先定义
-> 位姿输入 / 底盘输出 / 阻塞旋转 / 计时四个注入式接口）；② `trace_tune` 与
-> `Trace_base.c` 之间的双向裸全局耦合；③ `QRcode.c` 中断回调里硬编码的调参分流；
-> ④ `config/param_config.h` 的参数收拢。
+> V1.6.0 **移除了整个循迹功能**（`GrayTrace` / `Trace_base` / `trace_tune` 共 6 个文件），
+> 只保留 K230 找圆与导航。V1.5.0 遗留的 ② `trace_tune` 双向耦合、③ `QRcode.c` 中断
+> 回调硬编码分流，随之消失。
+>
+> **仍待处理**（按优先级）：① `app/` 内三个业务模块向 `algorithm/` 的下沉（需先定义
+> 位姿输入 / 底盘输出 / 阻塞旋转 / 计时四个注入式接口）；② `config/param_config.h`
+> 的参数收拢；③ 确认 `grayscale.c` / `k230.c` 里失去调用者的驱动 API 是否还要保留。
 
 | 规范中的名字 | 仓库现状 | 说明 |
 |---|---|---|
@@ -294,6 +297,28 @@ active_locator->get_pose(&robot_pose);
 ---
 
 ## 变更日志（持续追加）
+
+#### V1.6.0 - 2026-09-18
+- **修改类型**：删除（移除整个循迹功能）
+- **涉及模块**：业务层 / `algorithm/`；应用层 / `app/`；调试 / `debug/`；硬件驱动层 / `hardware/sensors/QRcode.c`
+- **修改内容**：按用户决定，**整体移除循迹功能**，共删除 6 个文件：
+  1. **`app/GrayTrace.c/h`**（灰度循迹，8 路灰度传感器）。它本就是**死代码** —— `GrayTrace_Update` / `GrayTrace_Update_two` 全仓库零调用者，`$egain/$ffgain` 调参通道收得到字节但永远不被消费。实车跑的是 K230 视觉循迹，不是这条。
+  2. **`algorithm/Trace_base.c/h`**（循迹底盘控制，PID / Stanley 两套控制器）。它是活的（经 `NLF_RunFlow` → `Trace_LineFollow`），随功能整体移除。
+  3. **`debug/trace_tune.c/h`**（在线调参工具，375 行）。**这是删除前两个的连带结果，非独立决定**：它调的全部参数（`g_tune_angle_*` → `Trace_base` 的 `g_pid_angle`、`g_tune_pos_*` → `g_pid_pos`、`g_tune_gray_*` → `GrayTrace` 的 `g_pid_gray`）都属于被删的两个模块，且它的两个调用者 `Trace_Tune_Service` / `Trace_Tune_Record` 只在 `Trace_base.c` 里被调。两个模块一删，它成为**零消费者、零调参对象**的空壳，且因 `extern pid_type_def g_pid_*` 悬空而无法链接。`debug/` 目录保留待将来放别的调试工具。
+- **连带清理**：
+  - `hardware/sensors/QRcode.c`：删除对 `Trace_Tune_OnByte` / `GrayTrace_Tune_OnByte` 的 include 与两级中断分流。**驱动层的中断回调不再依赖调试/业务模块**（V1.5.0 备注 4 遗留项之一，就此解决）。
+  - `app/worker_task.c`：删除 `Trace_base.h` include 与 `NLF_RunFlow()` 里 `Event_LinFolL` / `Event_LinFolR` → `Trace_LineFollow()` 的分支。
+  - `banyuntask.h` 的 `Event_LinFolL` / `Event_LinFolR` **枚举值保留未动** —— 它们是事件词汇表，将来换别的循迹方案时在 `NLF_RunFlow()` 接一个新分支即可。
+- **影响范围**：循迹功能整体消失，仅保留 K230 找圆（`Circle_Follow`）与导航（`Nav_RunWaypoints`）。`.elf` 由 `text 44792 / data 476 / bss 23556` 变为 `text 44532 / data 476 / bss 23492`（-260 B）。**注意减幅很小，因为当前 `osThreadNew` 未创建 Worker 任务，应用层整体仍被 `--gc-sections` 回收** —— 不能据此判断删除的影响面。
+- **验证状态**：已验证。
+  1. `cmake --build --preset Debug --clean-first` 全量重编，无 error；**无新增 warning**（仅剩 `ColorIdentif.c` 两处、`oled_data.c` 三处既有告警）；
+  2. `nm` 确认 `Trace_LineFollow` / `Trace_Tune_OnByte` / `GrayTrace_Update` / `g_pid_angle` / `g_pid_gray` / `g_tune_angle_kp` 均已不在符号表中；`nm -u` 为空；
+  3. 全仓库 grep 确认除注释里的说明性文字外，无残留引用。
+- **备注**：
+  1. **不兼容升级**（功能层面）：依赖循迹的调用方需要改用其他方案。对**已保留模块的接口**无影响。
+  2. **`hardware/sensors/grayscale.c` 与 `k230.c` 的部分导出函数失去调用者**：`Grayscale_Serial_Read` / `Grayscale_Update` / `K230_GetLineAngle` / `K230_GetPosition` 此前只被 `GrayTrace.c` / `Trace_base.c` 调用。它们是非 static 的驱动 API，不会产生 warning，**本次保留未删** —— 若确认不再需要，可另行清理。
+  3. V1.5.0 遗留项 ②（`trace_tune` ↔ `Trace_base` 的双向裸全局耦合）与 ③（`QRcode.c` 中断回调硬编码调参分流）**随本次删除一并消失**，问题不再存在。
+  4. 仍需处理：`app/` 内业务模块（`BollLocator` / `Mecanum_Move` / `NavigationMecanum`）向 `algorithm/` 的下沉；`config/param_config.h` 的参数收拢。
 
 #### V1.5.0 - 2026-09-18
 - **修改类型**：优化（分层归位第二轮）+ 重构（拆解聚合头）

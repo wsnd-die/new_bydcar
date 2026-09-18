@@ -8,7 +8,7 @@
  * @warning 本文件**刻意不 include 任何业务层或应用层的头**。
  *
  *   V1.3.0 之前它把全部 hardware 头、`../algorithm/mecanum.h`、以及全部 app 层头
- *   （banyuntask / Mecanum_Move / NavigationMecanum / Nav_position / GrayTrace）
+ *   （banyuntask / Mecanum_Move / NavigationMecanum / Nav_position）
  *   一次性拉进来，使 include 图退化成完全图 —— 任何一层的任何文件都能看见其它层
  *   的任何符号，CLAUDE.md 第 1 节「面向接口编程、驱动与业务完全解耦」形同虚设。
  *   同时它还挂着十余个全工程无定义的悬空 extern，靠 --gc-sections 回收才没炸。

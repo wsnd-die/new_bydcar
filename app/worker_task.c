@@ -8,7 +8,6 @@
 #include "mecanum.h"
 #include "hwt_imu.h"
 #include "Send_motor.h"
-#include "Trace_base.h"
 #include "Circle_base.h"
 #include "NavigationMecanum.h"
 #include "banyuntask.h"
@@ -167,12 +166,6 @@ void NLF_RunFlow(SystemMode_t mode)
 {
     switch (mode)
     {
-        case Event_LinFolL:
-        case Event_LinFolR:
-            /* Trace_base.c:239 内部按这两个 Mode 选左/右循迹 */
-            Trace_LineFollow(mode);
-            break;
-
         case Event_FindCircle:
             Circle_Follow();
             break;
@@ -187,6 +180,12 @@ void NLF_RunFlow(SystemMode_t mode)
              * 注意流程任务自身若正阻塞在导航/循迹里, 本分支拦不住它。 */
             g_angle_ctrl_enable = 0;
             break;
+
+        /* ---- 循迹整体已移除 (V1.6.0) ----
+         * Event_LinFolL / Event_LinFolR 不再有执行体: algorithm/Trace_base.c
+         * 与 app/GrayTrace.c 已删除。枚举值保留在 banyuntask.h 里未动,
+         * 若将来换用别的循迹方案, 在这里接一个新分支即可。
+         */
 
         /* ---- 以下四个的执行体都已存在, 但入参来源未定, 故暂不接线 ----
          *

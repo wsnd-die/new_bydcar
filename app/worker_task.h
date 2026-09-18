@@ -52,7 +52,7 @@ extern "C" {
  *
  * NLF_TASK 要跑整条调用链 —— NLF_RunFlow → Nav_RunWaypoints → Nav_GoToWorld
  * → Mecanum_MoveWithEncoder → Send_commandmotor, 且沿途多处调用 printf
- * (Mecanum_Move.c / NavigationMecanum.c / GrayTrace.c 等)。
+ * (Mecanum_Move.c / NavigationMecanum.c 等)。
  * newlib-nano 带 -u _printf_float 时, 一次 printf 就要几百字节栈,
  * 所以这里给足 4KB, 不要按"只放局部变量"估。 */
 #define FC_TASK_STACK_WORDS     256u     /* 1 KB  */
@@ -99,7 +99,7 @@ void NLF_Request(SystemMode_t mode);
  * @brief  流程主体 —— 由 NLF_TASK 在收到事件后调用。
  * @param  mode  要执行的流程。
  * @note   各 Mode 的执行体已存在, 但**整条流程的顺序编排尚未确定**,
- *         见 worker_task.c 中的说明与 CLAUDE.md 变更日志 V1.3.0。
+ *         见 worker_task.c 中的说明与 CLAUDE.md 变更日志 V1.4.0。
  */
 void NLF_RunFlow(SystemMode_t mode);
 
