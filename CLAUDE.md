@@ -298,6 +298,65 @@ active_locator->get_pose(&robot_pose);
 
 ## 变更日志（持续追加）
 
+#### V1.8.1 - 2026-09-18
+- **修改类型**：优化（应用层接线：FC_TASK 改经 `imu_hwt906` 实例访问 HWT906）
+- **涉及模块**：应用层 / `app/worker_task.c`
+- **修改内容**：
+  1. FC_TASK 不再直接调 `HWT_IMU_Init` / `HWT_IMU_Poll`、不再读 `g_hwt_imu_yaw` 全局量，改走 `imu_hwt906` 实例：启动时 `init()` 一次，每拍 `update()` + `get_pose()`；
+  2. 删除 FC_TASK 手写的 yaw 差分（`prev_yaw` / `has_prev` / `dt_ms` 状态与 `norm_deg180` 工具函数），角速度直接取实例 `wz`（实例内部同为 yaw 差分、wrap±π、实测 dt，方法与此前手写版一致）；
+  3. 量纲换算收进 FC_TASK：实例输出 rad / rad·s⁻¹，角度环按 deg 工作（`angle_ctrl.h`），新增 `RAD2DEG` 宏；`Angle_Update` 入参口径不变（deg、deg/s），对外契约 `g_angle_ctrl_enable` / `g_angle_target_yaw` 未动；
+  4. include 由 `hwt_imu.h` 改为 `HWT906.h`。
+- **影响范围**：FC_TASK 行为等价——同一数据源（同一 Poll）、同一差分法、同一量纲。里程计（`drv_wheel_odom.c`）与 `NavigationMecanum.c` 仍读 `g_hwt_imu_yaw_rad` 等全局量，由实例 `update()` 内部 Poll 继续刷新，不受影响。失联行为与改前一致（Poll 失败沿用上一拍姿态继续控制，未加 `valid` 保护——属行为改进项，留待实车验证后决定）。
+- **验证状态**：已验证（编译链接通过，无 error、无新增 warning；目标文件级确认 `worker_task.c.obj` 内 `FC_Task`（T）已定义且引用 `imu_hwt906`（U）；**但 `.elf` 内仍无 `imu_hwt906` / `FC_Task`——根因见备注 2，与本次接线无关**；未上车验证）。
+- **备注**：
+  1. **兼容升级**（对外契约未动）。
+  2. **【发现既有缺口】`app_freertos.c` 的 `RTOS_THREADS` 区块（112-115 行）只有注释，从未 `osThreadNew` 创建 FC_Task / NLF_Task**——全工程只有 `defaultTask` 一个任务，`worker_task.c` 整段被 `--gc-sections` 回收，V1.8.0 / V1.8.1 的接线当前**不参与运行**。这正是 V1.6.0 日志所述「osThreadNew 未创建 Worker 任务」的现状；V1.4.0 / V1.4.4 声称的创建未体现在当前工作区（重建文件非字节一致所致）。**经用户确认：暂不补创建代码。**
+  3. `HWT_IMU_Init` / `HWT_IMU_Poll` 全工程现仅经 `imu_hwt906` 实例调用（FC_TASK 是唯一使用点），V1.8.0 备注 2/3 的二选一问题自然消解。
+  4. 待补任务创建后（约 6 行：两个属性 + 两个 `osThreadNew`），`FC_Task → imu_hwt906 → HWT_IMU_Poll` 整链才会进 `.elf`。heap 16384 满足两任务栈需求（1KB + 4KB），仍建议开启 `configCHECK_FOR_STACK_OVERFLOW`（V1.4.0 建议，未做）。
+
+#### V1.8.0 - 2026-09-18
+- **修改类型**：新增（`imu_hwt906` 姿态设备实例）
+- **涉及模块**：抽象设备层 / 重建 `device/HWT906.c`、`device/HWT906.h`（此前只有 44/159 字节空壳占位，用户已删除，本次重写为真实实现）
+- **修改内容**：包装 `hardware/sensors/hwt_imu.c` 驱动，实现 `LocatorDev_t` 四函数：
+  1. `hwt906_loc_init()`：转调 `HWT_IMU_Init()`（探测在线 + 当前航向设零点，驱动既有语义），复位软件状态；
+  2. `hwt906_loc_update()`：转调 `HWT_IMU_Poll()`（阻塞 I2C3，约 100µs），填 `yaw`（`g_hwt_imu_yaw_rad`，已扣零点）/ `pitch` / `roll`（deg→rad）+ `wz`（rad/s，yaw 差分得到，同 FC_TASK 角度环法；差分前 wrap 到 ±π，避免 yaw 在 ±π 跳变产生 2π 尖峰）+ `valid` + `timestamp`；读失败冻结位姿置 `valid=0`；
+  3. `hwt906_loc_get_pose()` 纯读取；`hwt906_loc_is_healthy()` 返回 `valid`；
+  4. 文件末尾注册 `const LocatorDev_t imu_hwt906`。
+- **影响范围**：仅新增，驱动与业务层零改动。实例名**有意不用 `locator_*` 前缀**：本设备是姿态源不是定位源，`x/y/vx/vy` 恒 0，命名为 `locator_*` 可能被误选为 `active_locator` 造成定位静默失效。
+- **验证状态**：已验证。
+  1. `cmake --preset Debug` + `cmake --build --preset Debug` 通过，无 error、无新增 warning；
+  2. `nm` 目标文件级确认：`imu_hwt906`（R）+ 四个 `hwt906_loc_*`（t）均已定义；
+  3. `.elf` 内无 `imu_hwt906`——未被引用被 `--gc-sections` 回收，属预期行为（同 V1.7.0）；
+  4. **尚未上车验证运行时行为。**
+- **备注**：
+  1. **兼容升级**：新增实例，未修改任何已有接口。
+  2. **重复 Poll**：`app/worker_task.c:92` 的 FC_TASK 已每周期调 `HWT_IMU_Poll()`；本实例 `update()` 按 `LocatorDev_t` 契约自带 Poll。当前无人调用实例，无实际影响；将来 FC_TASK 若改读本实例，应删掉其直接 Poll，避免同周期双重 I2C 读取。
+  3. **重复 Init 语义**：`HWT_IMU_Init()` 会重置航向零点，FC_TASK 启动时已调用（`worker_task.c:85`）；本实例 `init()` 接入时两者应二选一（均在车静止时调用无实质影响，但语义应保持单一）。
+  4. 至此三个 `LocatorDev_t` 实例齐备：`locator_wheel`（定位）/ `locator_ops9`（定位，通信接线受 USART3 冲突阻塞，见 V1.7.0 备注 2）/ `imu_hwt906`（姿态）。`active_locator` 仍未建立。
+
+#### V1.7.0 - 2026-09-18
+- **修改类型**：新增（`locator_ops9` 定位设备实例，按用户选定方案 A：实例直接建在既有驱动文件内，不新建 `drv_ops9.c`）
+- **涉及模块**：抽象设备层 / `device/ops9_g491_uart3.c`、`device/ops9_g491_uart3.h`
+- **修改内容**：
+  1. 头文件删除悬空 `#include "ops9.h"`（该文件全仓库不存在，此前本文件无法编译；本次一并收进变更记录），改为 `#include "locator_dev.h"`，新增 `OPS9_FRAME_TIMEOUT_MS`（500ms）宏与 `extern const LocatorDev_t locator_ops9;` 声明；
+  2. 在既有 OPS9 通信驱动文件**末尾追加** `LocatorDev_t` 适配层与实例，**通信/解码逻辑（ops9_t 状态机、USART3 HAL 粘合）一行未动**：
+     - `ops9_loc_init()`：挂接 CubeMX 生成的 `huart3`（`OPS9_G491_UART3_Attach`）并复位软件状态；USART3 外设初始化由 `main.c` 的 `MX_USART3_UART_Init` 完成，此处不重复（同 `locator_wheel` 先例）；
+     - `ops9_loc_update()`：调 `OPS9_G491_UART3_GetLatest()` 取最新帧 → 单位换算（mm→m、度→rad，yaw 归一化到 [-π, π]）→ 填 `PoseData_t` 的 `valid` + `timestamp`（`HAL_GetTick()`）；无新帧时按 `OPS9_FRAME_TIMEOUT_MS` 判帧流超时，置 `valid=0` 并冻结位姿，绝不外推；`vx/vy` 恒 0（OPS9 不输出线速度，同 `locator_wheel` 先例）；
+     - `ops9_loc_get_pose()` 纯读取、`ops9_loc_is_healthy()` 返回 `s_pose.valid`——四函数签名与 `LocatorDev_t` 契约逐字一致；
+     - 文件末尾定义 `const LocatorDev_t locator_ops9`（注册方式同 `drv_wheel_odom.c:157` 的 `locator_wheel`）。
+- **影响范围**：仅新增，业务层接口零改动。上层此后可经 `locator_ops9` 以与 `locator_wheel` 相同的四个接口取位姿（m / rad），切换定位源只改 `active_locator` 指针一行。本驱动不再对外裸露 mm/度 的私有格式（`ops9_data_t` 仅内部使用）。
+- **验证状态**：已验证。
+  1. `cmake --preset Debug` + `cmake --build --preset Debug` 通过（CLion 自带 cmake/ninja），140/140 目标，无 error；`ops9_g491_uart3.c` 仅一条**既有**告警 `s_owned_huart3` 未使用（`-Wunused-variable`，非本次引入）；
+  2. `nm` 目标文件级确认：`locator_ops9`（R）+ `ops9_loc_init/update/get_pose/is_healthy`（t）均已定义；
+  3. `.elf` 内**无** `locator_ops9`——实例尚未被任何代码引用，被 `--gc-sections` 回收，**属预期行为**（同 V1.4.0 先例，接入 `active_locator` 后自然进入 .elf）；
+  4. `.elf` 现为 `text 45068 / data 492 / bss 23180`。**尚未上车验证运行时行为。**
+- **备注**：
+  1. **兼容升级**：新增实例，未修改任何已有接口。
+  2. **【阻塞项】USART3 与外设冲突未解决，通信尚未接线**：`hardware/sensors/k230.c` 同样使用 USART3（`huart3`），且全工程唯一的 `HAL_UART_RxCpltCallback`（`hardware/sensors/QRcode.c:112`）把 USART3 分支派给 `K230_RxProcessByte()`。OPS9 驱动的 `OPS9_G491_UART3_RxCpltCallback()` 目前**零调用**——不接线就没有数据流；若直接接线，两个驱动对同一 `huart3` 各调 `HAL_UART_Receive_IT` 会互斥（`HAL_BUSY`）。需用户决定：OPS9 换 UART / K230 挪走 / 其他方案，之后才能上车验证。
+  3. 坐标映射按直通（x/y 即 OPS9 坐标、yaw 即 OPS9 heading）；OPS9 heading 正方向与安装方位未经实测，若与车体系约定（X=前、Y=左、yaw CCW 正，第 3 节）不符，只需调整 `ops9_loc_update()` 内的符号与轴对应，上层无感知。
+  4. `active_locator` 尚未建立（第 2 节现状表），实例暂未接入任何任务；接入按 7.1 节第 4 步改指针即可。
+  5. 遗留小问题本次未动（见上轮评审）：`s_owned_huart3` 死变量（头文件注释所述 `OPS9_G491_UART3_InitStandalone` 模式未实现）；`OPS9_G491_UART3_SetPose()` 内 `HAL_Delay(10)` 建议换 `osDelay`；`OPS9_G491_UART3_ErrorCallback()` 中断上下文内 `HAL_UART_AbortReceive` 含超时等待风险。
+
 #### V1.6.0 - 2026-09-18
 - **修改类型**：删除（移除整个循迹功能）
 - **涉及模块**：业务层 / `algorithm/`；应用层 / `app/`；调试 / `debug/`；硬件驱动层 / `hardware/sensors/QRcode.c`

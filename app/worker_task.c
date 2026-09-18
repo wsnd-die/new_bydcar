@@ -6,7 +6,7 @@
 #include "Common_used.h"
 #include "angle_ctrl.h"
 #include "mecanum.h"
-#include "hwt_imu.h"
+#include "HWT906.h"
 #include "Send_motor.h"
 #include "Circle_base.h"
 #include "NavigationMecanum.h"
@@ -49,13 +49,8 @@ static volatile SystemMode_t s_nlf_pending = Event_STOP;
  * 二、工具
  * ================================================================== */
 
-/** @brief 角度归一到 [-180, 180)。 */
-static float norm_deg180(float d)
-{
-    while (d >  180.0f) d -= 360.0f;
-    while (d < -180.0f) d += 360.0f;
-    return d;
-}
+/* 实例输出 rad，角度环按 deg 工作（angle_ctrl.h），量纲在此换算 */
+#define RAD2DEG(r) ((r) * 57.2957795131f)
 
 /* ==================================================================
  * 三、FC_TASK —— 角度环
@@ -76,36 +71,30 @@ void FC_Task(void *argument)
 {
     (void)argument;
 
-    float    prev_yaw  = 0.0f;
-    uint8_t  has_prev  = 0;      /* prev_yaw 是否有效, 避免第一拍算出巨大差分 */
     uint8_t  was_on    = 0;      /* 上一拍的 g_angle_ctrl_enable, 用于取边沿 */
-    uint32_t prev_tick = osKernelGetTickCount();
 
-    /* 探测在线并把当前航向设为零点。返回值忽略: 掉线情况由 g_hwt_imu_online 反映。 */
-    HWT_IMU_Init();
+    /* 探测在线并把当前航向设为零点 (实例 init 内部转调 HWT_IMU_Init)。
+     * 掉线情况由 imu_hwt906.is_healthy() 反映。 */
+    imu_hwt906.init();
     Angle_Init(&s_fc);
 
     for (;;)
     {
+        PoseData_t pose;
+
         /* HWT906 没有中断/DRDY 输出, 只能轮询刷新 (见 hardware/hwt_imu.h)。
-         * 本任务是全工程周期最短的, 由它统一刷新, 里程计与导航共用同一份数据。 */
-        HWT_IMU_Poll();
+         * 本任务是全工程周期最短的, 由它统一刷新: 实例 update 内部
+         * HWT_IMU_Poll 更新的全局量, 里程计与导航仍共用同一份数据。
+         * (V1.8.0 备注 2 的二选一, 本次选实例: FC_TASK 不再直接调 Poll。) */
+        imu_hwt906.update();
+        imu_hwt906.get_pose(&pose);
 
-        uint32_t now   = osKernelGetTickCount();
-        uint32_t dt_ms = now - prev_tick;
-        prev_tick = now;
-
-        float yaw = g_hwt_imu_yaw;   /* deg, 已扣零点, -180..180 */
-
-        /* HWT906 只输出欧拉角, 拿不到原始角速度 (见 hwt_imu.h:10-13),
-         * 角速度环的反馈只能靠 yaw 差分。用实测 dt 而不是常量:
-         * 下发用的 Send_commandmotor() 内含 osDelay(5), 实际周期会大于 10ms。 */
-        float w_deg = 0.0f;
-        if (has_prev && dt_ms > 0u) {
-            w_deg = norm_deg180(yaw - prev_yaw) * (1000.0f / (float)dt_ms);
-        }
-        prev_yaw = yaw;
-        has_prev = 1;
+        /* 实例给 rad / rad/s, 角度环按 deg 工作, 换算后与
+         * g_angle_target_yaw 同量纲。wz 由实例内部差分得到, 方法与此前
+         * FC_TASK 手写版一致 (wrap±π + 实测 dt, 因为 Send_commandmotor()
+         * 内含 osDelay(5), 实际周期大于 10ms)。 */
+        float yaw   = RAD2DEG(pose.yaw);
+        float w_deg = RAD2DEG(pose.wz);
 
         if (g_angle_ctrl_enable)
         {

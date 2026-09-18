@@ -1,5 +1,6 @@
 #include "ops9_g491_uart3.h"
 #include <string.h>
+#include "usart.h"   /* CubeMX 生成的 huart3 句柄，供 locator_ops9.init() 挂接 */
 static UART_HandleTypeDef s_owned_huart3;
 static UART_HandleTypeDef *s_huart = NULL;
 
@@ -151,7 +152,7 @@ uint8_t ops9_get_latest(const ops9_t *ctx, ops9_data_t *out)
 static uint8_t send4(ops9_tx_callback_t tx, void *user, const char cmd[4])
 {
     if (tx == NULL)
-        return -1;
+        return 1;
     return tx((const uint8_t *)cmd, 4u, user);
 }
 
@@ -317,7 +318,7 @@ uint32_t OPS9_G491_UART3_GetBadFrameCount(void)
     return s_ops9.bad_frames;
 }
 
-static HAL_StatusTypeDef result_to_hal(int r)
+static HAL_StatusTypeDef result_to_hal(uint8_t r)
 {
     return (r == 0) ? HAL_OK : HAL_ERROR;
 }
@@ -370,3 +371,119 @@ HAL_StatusTypeDef OPS9_G491_UART3_SetPose(float heading_deg, float x_mm, float y
 
     return HAL_OK;
 }
+
+/* ============================================================
+ * LocatorDev_t 适配层 --- locator_ops9 实例
+ *
+ * 通信与解码由本文件前半部分完成（ops9_t 状态机 + USART3 HAL 粘合）。
+ * 此处只做三件事：取最新帧 → 单位换算（mm→m / 度→rad）→ 按
+ * PoseData_t 契约填充 valid + timestamp。
+ *
+ * 上层（业务层）只准经 LocatorDev_t 接口访问本驱动，不得直接调用
+ * 上面的 OPS9_G491_UART3_* / ops9_* 函数（CLAUDE.md 第 4、5.2 节）。
+ * ============================================================ */
+
+#define OPS9_DEG2RAD  0.01745329252f   /* pi / 180 */
+#define OPS9_PI       3.14159265359f
+
+static PoseData_t s_pose;             /* 最新位姿缓存（m / rad） */
+static uint32_t   s_last_frame_tick;  /* 最后收到合法帧的时刻（ms） */
+
+/**
+ * @brief 设备初始化：挂接 USART3 并复位软件状态
+ * @note  USART3 外设初始化由 CubeMX 完成（main.c 的 MX_USART3_UART_Init），
+ *        此处只做挂接与状态复位，不重复初始化外设（同 locator_wheel 先例：
+ *        外设初始化在别处，本驱动只清软件状态）。
+ */
+static void ops9_loc_init(void)
+{
+    if (s_huart == NULL) {
+        (void)OPS9_G491_UART3_Attach(&huart3);
+    }
+
+    s_pose.x     = 0.0f;
+    s_pose.y     = 0.0f;
+    s_pose.yaw   = 0.0f;
+    s_pose.pitch = 0.0f;
+    s_pose.roll  = 0.0f;
+
+    /* OPS9 不输出车体线速度 vx/vy，恒为 0（同 locator_wheel 先例） */
+    s_pose.vx = 0.0f;
+    s_pose.vy = 0.0f;
+    s_pose.wz = 0.0f;
+
+    s_pose.valid     = 0U;
+    s_pose.timestamp = 0U;
+
+    s_last_frame_tick = 0U;
+}
+
+/**
+ * @brief 周期更新：取最新帧、单位换算、刷新位姿缓存
+ * @note  这是【有副作用】的接口，必须固定周期调用且全局只调一处。
+ *        无新帧时检查帧流超时；超时置 valid=0 并冻结位姿，绝不外推。
+ *
+ * 坐标映射：此处按直通映射（x/y 即 OPS9 输出坐标，yaw 即 OPS9 heading）。
+ * OPS9 的 heading 正方向与安装方位未经上车实测，若与车体系约定
+ * （X=前方、Y=左方、yaw CCW 为正，CLAUDE.md 第 3 节）不一致，
+ * 只需调整本函数内的符号与轴对应，不影响上层。
+ */
+static void ops9_loc_update(void)
+{
+    ops9_data_t raw;
+
+    if (OPS9_G491_UART3_GetLatest(&raw)) {
+        /* 单位换算：mm→m、度→rad（PoseData_t 契约，CLAUDE.md 第 3 节） */
+        s_pose.x     = raw.x_mm / 1000.0f;
+        s_pose.y     = raw.y_mm / 1000.0f;
+        s_pose.yaw   = raw.heading_deg * OPS9_DEG2RAD;
+
+        /* yaw 归一化到 [-π, π] */
+        while (s_pose.yaw >  OPS9_PI) { s_pose.yaw -= 2.0f * OPS9_PI; }
+        while (s_pose.yaw < -OPS9_PI) { s_pose.yaw += 2.0f * OPS9_PI; }
+
+        s_pose.pitch = raw.pitch_deg * OPS9_DEG2RAD;
+        s_pose.roll  = raw.roll_deg  * OPS9_DEG2RAD;
+        s_pose.wz    = raw.heading_rate_dps * OPS9_DEG2RAD;
+
+        s_pose.valid      = 1U;
+        s_pose.timestamp  = HAL_GetTick();
+        s_last_frame_tick = s_pose.timestamp;
+    } else if ((s_pose.valid != 0U) && (s_last_frame_tick != 0U) &&
+               (HAL_GetTick() - s_last_frame_tick > OPS9_FRAME_TIMEOUT_MS)) {
+        /* 帧流中断：判离线，位姿冻结并标记不可信 */
+        s_pose.valid = 0U;
+    }
+}
+
+/**
+ * @brief 获取最新位姿
+ * @note  纯读取，无副作用，可任意频率调用。
+ */
+static void ops9_loc_get_pose(PoseData_t *pose_out)
+{
+    if (pose_out == NULL) {
+        return;
+    }
+    *pose_out = s_pose;
+}
+
+/**
+ * @brief 设备健康检查
+ * @return 1 = 帧流正常（在 OPS9_FRAME_TIMEOUT_MS 内收到过合法帧）；0 = 离线/不可信
+ */
+static uint8_t ops9_loc_is_healthy(void)
+{
+    return s_pose.valid;
+}
+
+/* ============================================================
+ * 设备实例（注册见 CLAUDE.md 第 4 节 / 7.1 节）
+ * ============================================================ */
+
+const LocatorDev_t locator_ops9 = {
+    .init       = ops9_loc_init,
+    .update     = ops9_loc_update,
+    .get_pose   = ops9_loc_get_pose,
+    .is_healthy = ops9_loc_is_healthy,
+};

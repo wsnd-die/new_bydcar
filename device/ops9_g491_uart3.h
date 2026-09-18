@@ -2,7 +2,8 @@
 #define OPS9_G491_UART3_H
 
 #include "stm32g4xx_hal.h"
-#include "ops9.h"
+#include "locator_dev.h"   /* PoseData_t + LocatorDev_t 契约（CLAUDE.md 第 3、4 节） */
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -11,6 +12,9 @@ extern "C" {
 #define OPS9_FRAME_SIZE        28u
 #define OPS9_PAYLOAD_SIZE      24u
 #define OPS9_UART_BAUDRATE     115200u
+
+/* 帧流超时阈值：超过该时长未收到新合法帧，is_healthy() 判离线。单位 ms */
+#define OPS9_FRAME_TIMEOUT_MS  500u
 
 typedef struct
 {
@@ -114,6 +118,21 @@ HAL_StatusTypeDef OPS9_G491_UART3_SetY(float y_mm);
 
 /* 按手册在命令之间留 10ms。 */
 HAL_StatusTypeDef OPS9_G491_UART3_SetPose(float heading_deg, float x_mm, float y_mm);
+
+/* ============================================================
+ * LocatorDev_t 实例（抽象设备层契约，CLAUDE.md 第 4 节 / 7.1 节）
+ *
+ * 定位源契约：本驱动对上层承诺输出【世界系 x / y / yaw】，
+ * 由 OPS9 模块直接给出。上层只准经 locator_ops9 访问，不得直接
+ * 调用上面的 OPS9_G491_UART3_* / ops9_* 函数。
+ *
+ * @note  用法（同 locator_wheel，切换定位源只改指针一行）：
+ *            const LocatorDev_t *active_locator = &locator_ops9;
+ *            active_locator->init();
+ *            active_locator->update();          // 固定周期调用一次
+ *            active_locator->get_pose(&pose);   // 任意频率纯读取
+ * ============================================================ */
+extern const LocatorDev_t locator_ops9;
 
 #ifdef __cplusplus
 }
