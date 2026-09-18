@@ -5,6 +5,13 @@
  */
 
 #include "Common_used.h"
+#include "Trace_base.h"
+#include "banyuntask.h"
+#include "pid.h"
+#include "mecanum.h"
+#include "Send_motor.h"
+#include "k230.h"
+#include "GrayTrace.h"
 #include "stdlib.h"
 #include "math.h"
 #include "trace_tune.h"

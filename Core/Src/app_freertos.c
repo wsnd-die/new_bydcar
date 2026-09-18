@@ -53,18 +53,9 @@
  * 因为调度器要通过它们给任务发线程标志。 */
 
 /* FC_TASK: 10ms 角度环, 必须能抢占阻塞式流程任务, 否则控制周期会被拉长 */
-const osThreadAttr_t fcTask_attributes = {
-  .name = "FC_TASK",
-  .priority = (osPriority_t) osPriorityAboveNormal,
-  .stack_size = FC_TASK_STACK_WORDS * 4
-};
+
 
 /* NLF_TASK: 流程任务, 大部分时间阻塞在导航/循迹里 */
-const osThreadAttr_t nlfTask_attributes = {
-  .name = "NLF_TASK",
-  .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = NLF_TASK_STACK_WORDS * 4
-};
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -121,8 +112,6 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* Worker 任务。架构: 驱动源 → defaultTask 调度器 → Worker 任务,
    * 见 app/banyuntask.h 与 app/worker_task.h。 */
-  fcTaskHandle  = osThreadNew(FC_Task,  NULL, &fcTask_attributes);
-  nlfTaskHandle = osThreadNew(NLF_Task, NULL, &nlfTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

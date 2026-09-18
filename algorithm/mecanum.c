@@ -1,5 +1,7 @@
 #include "../hardware/Common_used.h"
-
+#include "mecanum.h"
+#include "can.h"
+#include "uart2_tbop10.h"
 /**
   * @brief  麦轮单轮转速转换
   * @param  raw_speed : 原始计算速度值 (m/s 等效值)
@@ -148,7 +150,9 @@ uint32_t malu_cm_topluse_s(float cm)
 {
     /* 脉冲 = 厘米 / 周长(2πR) × 每圈脉冲数
      * 注意周长是 2πR 不是 πR, 之前漏了 ×2 会多算一倍脉冲 */
-    return (uint32_t)(cm / (2.0f * MEC_WHEEL_RADIUS * PI) * 3200);
+    /* 用带 f 后缀的字面量而非 <math.h> 的 M_PI: M_PI 是 double, 会让整个
+     * 表达式提升为双精度运算, 既变慢又改变舍入。此值与 CMSIS-DSP 的 PI 一致。 */
+    return (uint32_t)(cm / (2.0f * MEC_WHEEL_RADIUS * 3.14159265358979f) * 3200);
 }
 
 /* ================================================================

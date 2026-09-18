@@ -11,6 +11,11 @@
  */
 
 #include "Common_used.h"
+#include "mecanum.h"
+#include "pid.h"
+#include "grayscale.h"
+#include "k230.h"
+#include "Send_motor.h"
 #include "GrayTrace.h"
 
 /* trace_tune.c 串口调参 (#gkp/#gki/#gkd) 引用的灰度 PID 全局。

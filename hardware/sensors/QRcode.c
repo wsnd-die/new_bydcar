@@ -1,4 +1,9 @@
 #include "Common_used.h"
+#include "QRcode.h"
+#include "k230.h"
+#include "GrayTrace.h"
+#include "color.h"
+#include "ColorIdentif.h"
 #include "trace_tune.h"
 
 static uint8_t qrcode_rx_byte;

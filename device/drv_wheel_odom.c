@@ -21,7 +21,10 @@
 
 #include "drv_wheel_odom.h"
 #include "Common_used.h"
-
+#include "mecanum.h"
+#include "hwt_imu.h"
+#include "emm_5v.h"
+#include "Nav_position.h"
 /* ============================================================
  * 内部状态
  *

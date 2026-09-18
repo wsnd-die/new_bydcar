@@ -1,4 +1,5 @@
 #include "Common_used.h"
+#include "GrayTrace.h"
 #include "trace_tune.h"
 #include "pid.h"
 #include "Trace_base.h"

@@ -37,24 +37,37 @@
 当前仓库结构：
 
 ```
-app/        应用层 + 部分业务层（banyuntask.c、NavigationMecanum.c、BollLocator.c、Mecanum_Move.c、GrayTrace.c）
-algorithm/  业务层（Nav_position.c 轮式里程计、mecanum.c、pid.c、angle_ctrl.c、Trace_base.c、Circle_base.c）
-hardware/   硬件驱动层（hwt_imu.c、k230.c、emm_v5.c、Send_motor.c、oled.c、sw_uart.c、uart2_tbop10.c …）
-device/     抽象设备层 —— 接口 + locator_wheel 实现（OPS9/光流尚未接入）
-Core/       CubeMX 生成（main.c、app_freertos.c、外设初始化）
-uart/       msp_uart2.c
-obsolete/   已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/），不在任何 CMake glob 内，不参与编译
+app/              应用层：任务调度（banyuntask、worker_task）、比赛策略（ColorIdentif）
+                  ＋ 尚待下沉的业务模块（NavigationMecanum、BollLocator、Mecanum_Move、GrayTrace）
+algorithm/        业务层：mecanum、pid、angle_ctrl、Trace_base、Circle_base、Nav_position
+device/           抽象设备层：PoseData_t + LocatorDev_t 接口 ＋ locator_wheel 实现（OPS9/光流尚未接入）
+hardware/         硬件驱动层，按器件类型细分：
+  ├─ sensors/       hwt_imu、grayscale、color、collect_ir、k230、QRcode
+  ├─ actuators/     emm_v5、Send_motor、block_basic
+  ├─ display/       oled、oled_data
+  ├─ bus/           sw_uart、uart2_tbop10
+  └─ Common_used.h  工程公共头（只聚合 libc + HAL + FreeRTOS）
+debug/            在线调参工具（trace_tune），不属四层中的任何一层
+config/           参数配置目录（已建，param_config.h 待第 7.3 节落地）
+Core/             CubeMX 生成（main.c、app_freertos.c、外设初始化）
+uart/             msp_uart2.c
+obsolete/         已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/），不在任何 CMake glob 内，不参与编译
 ```
 
-> V1.3.0 已做一轮分层归位：`pid` / `angle_ctrl` / `Trace_base` / `Circle_base` 由 `hardware/` 迁入
-> `algorithm/`，`wit_protocol` 移入 `obsolete/`。`hardware/` 仍有 30 个文件，其中
-> `ColorIdentif.c`（比赛槽位表）、`trace_tune.c`（在线调参）按本规范并不属硬件驱动层，
-> 以及 `Common_used.h` 这一聚合头，**均尚未处理**。
+> V1.3.0 做了一轮分层归位（`pid` / `angle_ctrl` / `Trace_base` / `Circle_base` 迁入 `algorithm/`，
+> `wit_protocol` 移入 `obsolete/`）。V1.5.0 做了第二轮：`hardware/` 按器件类型细分，
+> `ColorIdentif` 归入 `app/`，`trace_tune` 移入新的 `debug/`，并**拆掉了 `Common_used.h`
+> 这一聚合头** —— 它此前使 include 图退化成完全图，是第 1 节解耦要求失效的根因。
 >
 > V1.4.0 接入了任务调度层（`app/worker_task.c` 的 `FC_TASK` / `NLF_TASK` +
 > `Core/Src/app_freertos.c` 的调度器）。此前全工程只有一个空循环任务，应用代码
 > 被 `--gc-sections` 整段回收、根本没进 `.elf`。**但流程入口与驱动源仍空**：
 > `task_send()` 零调用，`NLF_RunFlow()` 只写死了 Mode → 执行体的映射。
+>
+> **仍待处理**（按优先级）：① `app/` 内四个业务模块向 `algorithm/` 的下沉（需先定义
+> 位姿输入 / 底盘输出 / 阻塞旋转 / 计时四个注入式接口）；② `trace_tune` 与
+> `Trace_base.c` 之间的双向裸全局耦合；③ `QRcode.c` 中断回调里硬编码的调参分流；
+> ④ `config/param_config.h` 的参数收拢。
 
 | 规范中的名字 | 仓库现状 | 说明 |
 |---|---|---|
@@ -255,20 +268,67 @@ active_locator->get_pose(&robot_pose);
 
 ## 8. 构建说明（容易被忽略）
 
-`CMakeLists.txt:71` 用 `file(GLOB ... CONFIGURE_DEPENDS)` 收集源码，加入的目录为：
-`Core/Src`、`app`、`algorithm`、`hardware`、`device`。
+源码收集用 `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)`（V1.5.0 起，此前是 `GLOB`），
+顶层目录为：`Core/Src`、`app`、`algorithm`、`hardware`、`device`、`debug`、`config`。
 
-**新建 src 目录时必须同时改两处，否则新代码不参与编译：**
-
-1. `CMakeLists.txt` 的 `APP_SOURCES` glob 列表；
-2. `CMakeLists.txt` 的 `target_include_directories` 列表。
+- **在已有顶层目录下再建子目录**（如在 `hardware/` 下加 `imu/`）：**无需改 CMake**，
+  `GLOB_RECURSE` 会自动收集；但若新子目录里的 `.c` 要 `#include` 同目录的头，
+  仍需把该子目录加进 `target_include_directories`（include 路径没有递归形式）。
+- **新建顶层层目录**：必须同时改两处，否则新代码不参与编译 ——
+  1. `CMakeLists.txt` 的 `APP_SOURCES` glob 列表；
+  2. `CMakeLists.txt` 的 `target_include_directories` 列表。
 
 工程必须用 ARM 交叉工具链编译（`cmake --preset Debug`），用宿主 MinGW 编译会在
 `CMakeLists.txt:25` 直接 `FATAL_ERROR`。
 
+> **查告警一律用 `cmake --build --preset Debug --clean-first`。**
+> 增量构建只重编改动过的文件，会漏掉本次改动引入的告警 —— V1.5.0 就因此漏检了
+> 两处 `-Wimplicit-function-declaration`（隐式声明会被静默按 `int` 处理返回值，
+> 只报 warning 不报 error）。
+
+> **验证重构有没有改变行为，标准做法是比对目标文件而非 `.elf`。**
+> `.elf` 会被 `-Wl,--gc-sections` 裁剪，未被引用的模块根本不在其中（见 V1.3.0 备注），
+> 大小相同可能只是因为双方都没被链接。可靠做法：两次构建分别对全部 `.obj` 执行
+> `objcopy --strip-debug` 后逐字节比对（剥调试信息是因为搬动源文件会改变 DWARF 里的路径）。
+
 ---
 
 ## 变更日志（持续追加）
+
+#### V1.5.0 - 2026-09-18
+- **修改类型**：优化（分层归位第二轮）+ 重构（拆解聚合头）
+- **涉及模块**：构建 / `CMakeLists.txt`；硬件驱动层 / `hardware/` 全部；应用层 / `app/`；调试 / 新增 `debug/`；文档 / `CLAUDE.md`
+- **修改内容**：代码逻辑一行未改，全部是**位置调整 + include 显式化**。
+  1. **`hardware/` 按器件类型分子目录**（此前 30 个文件平铺）：
+     `sensors/`（hwt_imu、grayscale、color、collect_ir、k230、QRcode）、
+     `actuators/`（emm_v5、Send_motor、block_basic）、
+     `display/`（oled、oled_data）、
+     `bus/`（sw_uart、uart2_tbop10）。
+  2. **新增 `debug/` 目录**，`trace_tune.c/h` 由 `hardware/` 迁入。它是在线调参工具，不属四层中的任何一层。
+  3. **`ColorIdentif.c/h` 迁入 `app/`**。它内容是 QR 序号 → 槽位映射表与旋转进度推进，属**比赛策略**而非硬件驱动。
+  4. **拆解 `hardware/Common_used.h` 聚合头**（本轮最重要的一项）：
+     - 该文件此前把全部 hardware 头、`../algorithm/mecanum.h`、以及全部 app 层头（banyuntask / Mecanum_Move / NavigationMecanum / Nav_position / GrayTrace）一次性 include 进来，使 include 图退化成**完全图** —— 任何一层的任何文件都能看见其它层的任何符号，第 1 节的「驱动与业务完全解耦」形同虚设；
+     - 现瘦身为**只聚合底座**：libc + HAL/CMSIS + FreeRTOS/CMSIS-RTOS2 + CubeMX 外设句柄（`gpio/dma/fdcan/i2c/spi/tim/usart.h`，它们是 HAL 层设施，不属四层中的任何一层，保留可免去每个文件重复写一长串）；
+     - **13 个 .c 各自补上真正依赖的模块头**（如 `Trace_base.c` 补 `Trace_base.h` —— 它此前连自己的头都没 include，靠聚合头顺带拉进来）。
+     - 删除 **12 个全工程无定义的悬空 extern**（`FlagOFMotor` / `FlagOFYuyin` / `Data_uart1` / `Data_uart3` / `buffer` / `buffer_flag` / `buf` / `data_angle` 及 `Uart3_deel` / `Uart1_DMA_IDLE_Start` / `shell_print` / `shell_print3` / `Send_commendyu` / `UART3_Send` / `Guan_dao` —— 整套 UART3/语音子系统已不存在，只剩声明）；
+     - 删除零引用的 `arm_math.h`、`use_xing_che`、`ni_he_mode`、`RX_BUF_SIZE`、`DEG_TO_RAD`、`RAD_TO_DEG`。
+     - `g_angle_ctrl_enable` / `g_angle_target_yaw` 的 extern 移入 `app/worker_task.h`（其定义处所在模块）。
+  5. **3 个"间接 include 聚合头"的头文件一并修正**：`app/BollLocator.h`、`algorithm/Nav_position.h`、`app/ColorIdentif.h` 改为各自只 include 真正需要的头。
+  6. **`CMakeLists.txt` 改为 `GLOB_RECURSE`**，并纳入 `debug/`、`config/`（`config/` 目录已建，`param_config.h` 待第 7.3 节落地）。今后在 `hardware/` 下再分目录无需改 CMake；新增**顶层**层目录仍需同时改 glob 与 include 路径两处。
+- **影响范围**：**无功能影响**，接口签名一律未改。`hardware/` 由 30 个文件减为 1 个头文件 + 4 个子目录。
+- **验证状态**：已验证。
+  1. `cmake --build --preset Debug --clean-first` 全量重编，无 error；**无新增 warning**（仅剩 `ColorIdentif.c` 两处、`oled_data.c` 三处既有告警）；
+  2. `.elf` 为 `text 44792 / data 476 / bss 23556`，与改动前**完全一致**；
+  3. **目标文件级比对**：139 个 `.obj` 经 `objcopy --strip-debug` 后逐字节比对，**全部完全一致** —— 证明搬迁与拆解未改变任何代码生成；
+  4. **尚未上车验证运行时行为**（本次无行为改动，风险主要在上车后 include 是否齐全，但编译已覆盖）。
+- **备注**：
+  1. **兼容升级**，对上层无影响。
+  2. **本轮暴露的两个隐藏依赖**（均已修复）：
+     - `algorithm/mecanum.c` 用的 `PI` 常量**只定义在 CMSIS-DSP 的 `arm_math.h`** 里。为这一个数学常量而把整个 DSP 库拉进公共头是不合理的，已改用字面量 `3.14159265358979f`（与该宏原值一致）。**注意不要改成 `<math.h>` 的 `M_PI`** —— 它是 `double`，会让 `2.0f * MEC_WHEEL_RADIUS * M_PI` 整个表达式提升为双精度，既变慢又改变舍入。
+     - 补 include 时若遗漏各模块头，编译器会给出 `-Wimplicit-function-declaration` 并静默按 `int` 处理返回值（如 `BlockBasic_TurntableTo`、`can_SendCmd`），**不报 error 只报 warning**。
+  3. **查告警必须用 `--clean-first`**：本次曾用增量构建检查"无新增 warning"，因相关文件未重编而漏掉了两处隐式声明。增量构建的告警结论不可信。
+  4. **`debug/trace_tune.c` 与 `algorithm/Trace_base.c` 的双向裸全局耦合本轮未解**：`trace_tune.c:37-39` 用 `extern pid_type_def` 直接读写 `Trace_base.c` 的 `g_pid_angle` / `g_pid_pos`，`Trace_base.c` 反读 11 处 `g_tune_*` 三元表达式。只搬文件不拆这层耦合，等于把隐式依赖换个目录继续存在。同理 `hardware/sensors/QRcode.c:114,119` 在 USART1 中断回调里硬编码了 `Trace_Tune_OnByte` / `GrayTrace_Tune_OnByte` 两个调参分流 —— 驱动层依赖调试工具。**这两处留待后续单独处理。**
+  5. 本轮**未做**：`app/` 内业务模块（`BollLocator` / `GrayTrace` / `Mecanum_Move` / `NavigationMecanum`）向 `algorithm/` 的归位。探查结论：`Mecanum_Move.c` 是「算法 + 驱动」混杂（10 处 `Emm_V5_*` 直调），需按函数切；`BollLocator.c` 算法纯度最高（结构体传参、无全局表），只需把 `TB_position` / `imu_yaw` 裸读换成 `PoseData_t` 入参即可整体下沉；`NavigationMecanum.c` 是「通用规划 + 比赛编排 + 跨任务握手」三合一，需要先定义位姿输入 / 底盘输出 / 阻塞旋转 / 计时四个注入式接口才能切开。
 
 #### V1.4.0 - 2026-09-17
 - **修改类型**：新增（接通任务调度层）

@@ -66,19 +66,32 @@ set(FREERTOS_SOURCES
         uart/msp_uart2.c
         uart/msp_uart2.h)
 
-# Application code: CubeMX-generated Core, plus the hand-written app/,
-# algorithm/, hardware/ and device/ folders.
+# Application code: CubeMX-generated Core, plus the hand-written layer folders.
 #
-# device/ is the abstraction layer of the architecture spec (CLAUDE.md): it
-# holds PoseData_t and the LocatorDev_t interface. It is spelled "device" and
-# not "drivers" because Windows filenames are case-insensitive, so a drivers/
-# folder would resolve onto the vendor Drivers/ folder.
-file(GLOB APP_SOURCES CONFIGURE_DEPENDS
+# The folders mirror the four-layer architecture spec (CLAUDE.md):
+#   app/       应用层   —— 任务调度、比赛策略、路径点数据
+#   algorithm/ 业务层   —— 运动学、PID、循迹决策、位姿
+#   device/    抽象设备层 —— PoseData_t + LocatorDev_t 接口及各定位源实现
+#   hardware/  硬件驱动层 —— sensors/ actuators/ display/ bus/ 四类器件
+#   debug/     调试工具  —— 在线调参等, 不属于四层中的任何一层
+#   config/    参数配置  —— 可调参数的单一出处, 见规范第 7.3 节
+#
+# device/ is spelled "device" and not "drivers" because Windows filenames are
+# case-insensitive, so a drivers/ folder would resolve onto the vendor
+# Drivers/ folder.
+#
+# GLOB_RECURSE (rather than GLOB) is deliberate: it lets hardware/ be split
+# into per-device-type subfolders without touching this file again. Adding a
+# brand-new top-level layer folder still requires an entry here AND a matching
+# target_include_directories() path below — see CLAUDE.md section 8.
+file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/*.c
      ${CMAKE_CURRENT_SOURCE_DIR}/app/*.c
      ${CMAKE_CURRENT_SOURCE_DIR}/algorithm/*.c
      ${CMAKE_CURRENT_SOURCE_DIR}/hardware/*.c
-     ${CMAKE_CURRENT_SOURCE_DIR}/device/*.c)
+     ${CMAKE_CURRENT_SOURCE_DIR}/device/*.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/debug/*.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/config/*.c)
 
 # The IMU660 drivers and their fusion code have been retired in favour of the
 # WitMotion HWT906 (I2C3, see hardware/hwt_imu.c). The old sources live in
@@ -104,6 +117,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     algorithm
     hardware
     device
+    debug
+    config
+    # hardware/ 按器件类型细分。这些路径必须逐个列出 —— 源码收集用了
+    # GLOB_RECURSE, 但 include 路径没有递归形式。
+    hardware/sensors
+    hardware/actuators
+    hardware/display
+    hardware/bus
     Drivers/STM32G4xx_HAL_Driver/Inc
     Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
     Drivers/CMSIS/Device/ST/STM32G4xx/Include

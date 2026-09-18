@@ -10,6 +10,7 @@
  */
 
 #include "Common_used.h"
+#include "k230.h"
 uint8_t rx3;
 /* ---- 接收状态机 ---- */
 typedef enum {

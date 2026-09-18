@@ -27,7 +27,7 @@
 */
 
 #include "Common_used.h"
-
+#include "oled.h"
 // 如果用到中文，编译器附加选项需要加 --no-multibyte-chars  (用AC6编译器的不用加)
 
 /*

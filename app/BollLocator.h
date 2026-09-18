@@ -18,7 +18,8 @@
 #ifndef STM32G4_TEST_BOLLLOCATOR_H
 #define STM32G4_TEST_BOLLLOCATOR_H
 
-#include "Common_used.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 /* ============================================================
  * 默认参数
