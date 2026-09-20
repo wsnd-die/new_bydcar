@@ -6,12 +6,11 @@
 #include "collect_ir.h"
 #include "uart2_tbop10.h"
 
-static bool ir_last = false;   /* 上一采样是否遮挡 (true=遮光) */
+static bool ir_last = false;   /* 上一采样是否遮挡 true=遮光 */
 
 void IR_Init(void)
 {
 #if defined(PWR_CR3_UCPD_DBDIS)
-    /* PB6 带 UCPD 死电池 5.1kΩ 下拉, 复位后可能激活, 会干扰红外读数 → 关闭 */
     SET_BIT(PWR->CR3, PWR_CR3_UCPD_DBDIS);
 #endif
 

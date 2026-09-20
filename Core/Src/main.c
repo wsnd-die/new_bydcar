@@ -30,8 +30,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-#include "emm_5v.h"    /* → Core/Inc/can.h, 提供 fdcan2_UserInit() 的原型。
-                        * 放在 USER CODE 区是为了防止 CubeMX 重新生成时被抹掉。 */
+#include "emm_5v.h"
 
 /* USER CODE END Includes */
 
@@ -109,15 +108,7 @@ int main(void)
   MX_I2C3_Init();
   /* USER CODE BEGIN 2 */
 
-  /* FDCAN2 的"用户初始化"：配置扩展帧滤波 + HAL_FDCAN_Start() + 打开 FIFO0 中断。
-   *
-   * MX_FDCAN2_Init() 只走到 HAL_FDCAN_Init() 为止，它把 CCCR.INIT 置 1 —— 节点停在
-   * 配置态、不在总线上。此种状态下 HAL_FDCAN_AddMessageToTxFifoQ() 会因为
-   * hfdcan->State != HAL_FDCAN_STATE_BUSY 直接返回 HAL_ERROR，被 Core/Src/can.c:108
-   * 折算成 can_error_step = 2 并返回 0，**所有 can_SendCmd() 静默失败、电机不动**。
-   *
-   * 本函数此前全工程只有 can.c:261 的 bus-off 恢复回调在调用，上电路径从未调用过，
-   * 所以这套 CAN 驱动上车后其实一直没真正发出去过任何一帧。必须补在这里。 */
+
   fdcan2_UserInit();
 
   /* USER CODE END 2 */

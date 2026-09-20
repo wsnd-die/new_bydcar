@@ -51,7 +51,6 @@
 #include "cmsis_os2.h"
 #include "queue.h"
 #include "semphr.h"
-
 /* ============================================================
  * 4. STM32CubeMX 外设头文件（句柄声明）
  *
