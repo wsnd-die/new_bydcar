@@ -1,6 +1,7 @@
 #ifndef __EMM_V5_H
 #define __EMM_V5_H
 
+#include <stdbool.h>                    /* 本头文件的函数原型里用了 bool */
 #include "../Core/Inc/can.h"
 #include "stm32g4xx.h"                  // Device header
 

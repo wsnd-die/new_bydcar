@@ -8,7 +8,7 @@
 //   → 测量距离 + v·dt 预测融合 → 梯形速度规划 (缓启/缓停)
 //   → 世界→车体坐标变换 (锁定 imu_yaw)
 //   → Mecanum_Calc_Full(cmd_vx, cmd_vy, 0)
-//   → Send_commandmotor() → Emm_V5_Vel_Control() → FDCAN1
+//   → Send_commandmotor() → Emm_V5_Vel_Control() → FDCAN2 (PB12/PB13)
 //
 // 预测融合说明:
 //   meas_dist  = |TB_position − target|                    (mm, 测量值)

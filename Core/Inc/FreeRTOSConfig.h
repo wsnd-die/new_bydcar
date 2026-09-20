@@ -69,18 +69,7 @@
 #define configTICK_RATE_HZ                       ((TickType_t)1000)
 #define configMAX_PRIORITIES                     ( 56 )
 #define configMINIMAL_STACK_SIZE                 ((uint16_t)128)
-/* heap_4 的总堆。原值 3072 只够 defaultTask 一个线程 (栈 512B) 加空闲任务,
- * 加 FC_TASK / NLF_TASK 后必然 osThreadNew 返回 NULL —— 而且**不报任何错**,
- * 表现为任务静默不跑。本工程 RAM 96KB 实际只用 ~17KB, 故放宽到 16384。
- *
- * 当前分配预算 (动态创建, 栈 + TCB 都从这个堆出):
- *   defaultTask  512B 栈 + TCB     空闲任务   512B 栈 + TCB
- *   FC_TASK     1024B 栈 + TCB     定时器任务 1024B 栈 + TCB (configUSE_TIMERS=1)
- *   NLF_TASK    4096B 栈 + TCB     事件队列   5 × 8B + 队列结构
- * 合计约 7.9KB, 占 48%, 余量够再加一个 Worker。
- *
- * 注意 heap_4 不会把未用的堆还回去, 这是上限而非消耗量。 */
-#define configTOTAL_HEAP_SIZE                    ((size_t)16384)
+#define configTOTAL_HEAP_SIZE                    ((size_t)3072)
 #define configMAX_TASK_NAME_LEN                  ( 16 )
 #define configUSE_TRACE_FACILITY                 1
 #define configUSE_16_BIT_TICKS                   0
