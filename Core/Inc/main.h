@@ -59,6 +59,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define IRcollect_Pin GPIO_PIN_10
 #define IRcollect_GPIO_Port GPIOF
+#define START_Pin GPIO_PIN_0
+#define START_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 

@@ -141,14 +141,19 @@ void StartDefaultTask(void *argument)
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
 
 
+  Emm_V5_En_Control(1, 1, 0);
+  Emm_V5_En_Control(2, 1, 0);
+  Emm_V5_En_Control(3, 1, 0);
+  Emm_V5_En_Control(4, 1, 0);
+
   for(;;)
   {
     // TaskCommand_t cmd = task_recive();
     // if (cmd.k) {
     //   NLF_Request(cmd.Mode);
     // }
-    // Emm_V5_Vel_Control(1, 1, 100, 0, 0);
-    // Emm_V5_Vel_Control(2, 1, 100, 0, 0);
+    // Emm_V5_Vel_Control(1, 0, 100, 0, 0);
+    // Emm_V5_Vel_Control(2, 0, 100, 0, 0);
     // Emm_V5_Vel_Control(3, 1, 100, 0, 0);
     // Emm_V5_Vel_Control(4, 1, 100, 0, 0);
     osDelay(20);
