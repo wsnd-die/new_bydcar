@@ -2215,7 +2215,7 @@ void HAL_UART_IRQHandler(UART_HandleTypeDef *huart)
   if (errorflags == 0U)
   {
     /* UART in mode Receiver ---------------------------------------------------*/
-    if (((isrflags & USART_ISR_RXNE_RXFNE) != 0U)
+      if (((isrflags & USART_ISR_RXNE_RXFNE) != 0U)
         && (((cr1its & USART_CR1_RXNEIE_RXFNEIE) != 0U)
             || ((cr3its & USART_CR3_RXFTIE) != 0U)))
     {
