@@ -357,6 +357,175 @@ active_locator->get_pose(&robot_pose);
   4. `active_locator` 尚未建立（第 2 节现状表），实例暂未接入任何任务；接入按 7.1 节第 4 步改指针即可。
   5. 遗留小问题本次未动（见上轮评审）：`s_owned_huart3` 死变量（头文件注释所述 `OPS9_G491_UART3_InitStandalone` 模式未实现）；`OPS9_G491_UART3_SetPose()` 内 `HAL_Delay(10)` 建议换 `osDelay`；`OPS9_G491_UART3_ErrorCallback()` 中断上下文内 `HAL_UART_AbortReceive` 含超时等待风险。
 
+#### V1.6.3 - 2026-09-20
+- **修改类型**：修复（CAN 总线状态诊断 + bus-off 检测掩码错误）
+- **涉及模块**：硬件驱动层 / `Core/Src/can.c`、`Core/Inc/can.h`
+- **修改内容**：
+  1. **修正 `HAL_FDCAN_ErrorCallback()` 的 bus-off 检测掩码（V1.6.2 备注 2 记为"待处理"的那条）**。
+     原代码判断 `err & FDCAN_PSR_BO`，其中 `err = HAL_FDCAN_GetError(hfdcan)` 返回的是
+     `hfdcan->ErrorCode` —— 而 `HAL_FDCAN_IRQHandler` 是拿 **IR 寄存器**的位去 OR 它的
+     （`Errors = Instance->IR & FDCAN_ERROR_MASK; hfdcan->ErrorCode |= Errors;`）。
+     BO/EP/EW/LEC 这些状态位在 **PSR** 寄存器里，两者位号完全不同：
+     `FDCAN_IR_BO = 0x00080000`（bit19）vs `FDCAN_PSR_BO = 0x00000080`（bit7），
+     而 `FDCAN_ERROR_MASK` 覆盖的位全在 bit17 以上 —— **该条件恒为假，
+     这段 bus-off 恢复从未执行过**。后果：一旦总线错误把 `ECR.TEC` 顶到 256 进入
+     bus-off，节点被踢下线，Tx FIFO 里积压的帧再也发不出去，`can_error_step` 恒为 1
+     且**无法自恢复，只能复位**。
+     正确写法用 `HAL_FDCAN_GetProtocolStatus()` 取 PSR 后再判 `ps.BusOff`。
+  2. **bus-off 恢复移出中断上下文**：新增 `fdcan2_recover()`（`can.c`），把
+     `DeInit → MX_FDCAN2_Init → fdcan2_UserInit` 整轮重初始化收进一个函数，
+     并**标注必须在任务上下文调用**。中断回调里只累加 `can_busoff_cnt`，不做重初始化 ——
+     `HAL_FDCAN_DeInit()` 会关外设时钟并重配 RCC/GPIO/NVIC，在 ISR 里重入 HAL 初始化风险很大。
+  3. **新增总线状态快照**（`can.c` 定义，`can.h` extern）：`can_psr`（原始 PSR 寄存器）、
+     `can_psr_tec`（`ECR.TEC`）、`can_busoff_cnt`。此前的 `can_error_code` 装的是
+     `ErrorCode`（IR 位），在调试器里读不出总线到底怎么了。
+- **影响范围**：**诊断能力增强，行为上无功能改动** —— bus-off 恢复此前从未执行过，
+  改后仍未启用（只是检测对了、状态可见了），故运行时行为与修改前一致。
+  `can_error_code` 的语义由「IR 位」变为「PSR 快照」，仅影响调试读数。
+  接口签名未改，新增 `fdcan2_recover()` 属兼容扩展。
+- **验证状态**：已验证（编译层面）。`cmake --build --preset Debug --clean-first` 无 error、
+  **无新增 warning**；`FLASH 44740 B / 8.53%`、`RAM 10664 B / 10.85%`
+  （RAM 大幅下降是因为 CubeMX 重新生成把 `configTOTAL_HEAP_SIZE` 还原成了 3072）。
+- **备注**：
+  1. **PSR 判读表**（调试器里看 `can_psr`）：
+     - bits2:0 `LEC` = 3 → **ACK 错误**，帧发出去了没人应答
+     - bit4:3 `ACT`：0=同步中(看不到总线活动) 1=空闲 2=接收 3=发送
+     - bit7 `BO` = 1 → **已 bus-off**
+     - bit6 `EW` / bit5 `EP` → 错误计数已越警告/被动阈值
+     配合 `can_psr_tec`：没人 ACK 时每失败一帧 +8，涨到 256 触发 bus-off。
+  2. **待办（未做）**：`fdcan2_recover()` 目前**没有调用者**。若确认需要自恢复，
+     应由任务轮询 `can_busoff_cnt` 变化后调用 —— 不要在中断里调。
+  3. **仍未处理**：`MX_FDCAN2_Init()` 里 `ExtFiltersNbr = 0`（见 V1.6.1 备注 2）；
+     CubeMX 重新生成会冲掉 `FreeRTOSConfig.h` 的 `configTOTAL_HEAP_SIZE` 与
+     `configCHECK_FOR_STACK_OVERFLOW`、以及 `app_freertos.c` 的 `.stack_size`
+     （见 V1.6.2），**这几项应改在 `.ioc` 里**。
+
+#### V1.6.2 - 2026-09-20
+- **修改类型**：修复（排查 HardFault，加固启动与任务栈）
+- **涉及模块**：应用层 / `Core/Src/app_freertos.c`；配置 / `Core/Inc/FreeRTOSConfig.h`
+- **修改内容**：现象是上电调试时直接跳进 `HardFault_Handler`（`Core/Src/stm32g4xx_it.c`）。
+  本轮查实一条**确定的 HardFault 机制**，并排除了一个此前的假设。
+  1. **【确认】`osDelay()` 在调度器启动前调用会 NULL 解引用。**
+     `Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c` 的 `osDelay()`
+     只判断 `IS_IRQ()`，对"调度器未启动"**没有任何保护**，直接 `vTaskDelay(ticks)`；
+     `tasks.c:1341` 的 `vTaskDelay` → `prvAddCurrentTaskToDelayedList` →
+     `tasks.c:5193` 的 `uxListRemove( &( pxCurrentTCB->xStateListItem ) )`。
+     而 `pxCurrentTCB` 初值是 **NULL**（`tasks.c:337`），直到第一个任务被创建时才在
+     `prvAddNewTaskToDelayedList` 里赋值（`tasks.c:1088`）；任务链表本身也要到那一刻
+     才由 `prvInitialiseTaskLists()`（`tasks.c:1095`）初始化。
+     **原先 `Emm_V5_En_Control(4,1,0)` 就放在 `MX_FREERTOS_Init()` 里、`osThreadNew()`
+     之前**，其调用链 `Emm_V5_En_Control` → `can_SendCmd`（`can.c:111`）→
+     `FDCAN_WaitFreeTxFifo`（`can.c:31-44`）在 TX FIFO 满时会调 `osDelay(1)` ——
+     命中即 HardFault。现把使能命令移到 `StartDefaultTask` 内（调度器已运行），
+     并在 `MX_FREERTOS_Init()` 留下说明注释，防止后续再把发送类调用加回去。
+  2. **【确认】`can.c:249` 的 bus-off 恢复是死代码，且这个 bug 恰好挡住了另一条风险路径。**
+     `HAL_FDCAN_ErrorCallback()` 里判断的是 `err & FDCAN_PSR_BO`，其中
+     `err = HAL_FDCAN_GetError(hfdcan)` 返回的是 `hfdcan->ErrorCode`，而
+     `HAL_FDCAN_IRQHandler` 是拿 **IR 寄存器**的位去 OR 它的
+     （`stm32g4xx_hal_fdcan.c`：`Errors = hfdcan->Instance->IR & FDCAN_ERROR_MASK;`
+     → `hfdcan->ErrorCode |= Errors;`）。**IR 位与 PSR 位不是一回事**：
+     `FDCAN_IR_BO = 0x00080000`（bit19），`FDCAN_PSR_BO = 0x00000080`（bit7）；
+     `FDCAN_ERROR_MASK` 覆盖的位全在 bit17 以上，永远不可能命中 bit7。
+     所以 bus-off 恢复**从未触发过**，正确写法应是
+     `HAL_FDCAN_GetProtocolStatus(hfdcan) & FDCAN_PROTOCOL_STATUS_BUS_OFF`。
+     **本轮刻意不修**：修好它会让「中断里 `HAL_FDCAN_DeInit` + `MX_FDCAN2_Init` +
+     `fdcan2_UserInit` 整轮重初始化」这条路径首次可达，而该路径本身可疑（在 ISR 里
+     关外设时钟、重配 RCC、重开 NVIC），很可能引入新的 HardFault。留待单独处理。
+  3. **加固 `defaultTask` 栈**：`.stack_size` 由 `128 * 4`（512 B，CMSIS-RTOS2 单位是
+     **字节**）提到 `512 * 4`（2048 B）。512 B 对本任务太紧 —— 它现在要跑
+     `Emm_V5_Vel_Control` → `can_SendCmd`，而 `can_SendCmd` 在发送失败时会调
+     `printf`（`can.c:104,113`），newlib 的 `vfprintf` 加调用链本身就要几百字节。
+  4. **打开栈溢出检查**：`configCHECK_FOR_STACK_OVERFLOW` 此前**在 `FreeRTOSConfig.h`
+     里根本没有定义**（默认 0，完全静默）。现设为 `2`（上下文切换时校验栈尾 0xA5 图案），
+     并在 `Core/Src/app_freertos.c` 的 `USER CODE BEGIN Application` 实现
+     `vApplicationStackOverflowHook()` —— 触发时关中断并停住，便于调试器直接看出是哪条任务。
+- **影响范围**：`Emm_V5_En_Control(4,1,0)` 的发送时机由"上电时一次"变为"defaultTask
+  启动时一次"，语义不变。`defaultTask` 栈翻两番，heap_4 预算由约 7.9KB 增至约 9.4KB
+  （`configTOTAL_HEAP_SIZE` 16384，占比降到 58%），无需改堆大小。
+  接口签名一律未改，**兼容升级**。
+- **验证状态**：**未验证（待上车）**。
+  1. `cmake --build --preset Debug --clean-first` 全量重编，无 error；**无新增 warning**
+     （仅剩既有的 `ColorIdentif.c` 两处、`oled_data.c` 三处）；
+  2. 链接通过，`FLASH 45316 B / 8.64%`、`RAM 23960 B / 24.37%`；
+  3. **根因尚未证实。** 上述 1 是"已证实的机制 + 已证实的调用点"，但触发条件
+     （`FDCAN_WaitFreeTxFifo` 里 `HAL_FDCAN_GetTxFifoFreeLevel()` 返回 0，即 TX FIFO 满）
+     在冷启动那一刻并不成立（此时 FIFO 为空、free level = 3）。故**它是一颗已拆除的地雷，
+     不一定是本次 HardFault 的元凶**。真正的定位需要 fault 现场的 PC：
+     停在 `HardFault_Handler` 时读 `CFSR`(0xE000ED28) / `HFSR`(0xE000ED2C) /
+     `BFAR`(0xE000ED38)，再从异常栈帧取 PC（线程态取 `*(uint32_t*)(PSP+24)`，
+     中断态取 `*(uint32_t*)(MSP+24)`），最后用
+     `arm-none-eabi-addr2line -e build/Debug/bydcar_g491vet6.elf -f -C 0x<PC>` 反查。
+- **备注**：
+  1. **快速二分**：把 `StartDefaultTask` 循环里的 `Emm_V5_Vel_Control(...)` 注释掉再跑。
+     若不再 HardFault，问题就在 CAN 发送链（含 `can_SendCmd` 里的 `printf`）；
+     若仍然 HardFault，则与 CAN 无关，应转向 `HAL_FDCAN_ErrorCallback` 之外的路径。
+  2. **诊断变量**：printf 输出是丢掉的（见 V1.6.1），请直接在调试器里看
+     `can_error_step` / `can_error_count`（`Core/Src/can.c:7-8`）：
+     `0` = 发送正常；`1` = TX FIFO 20 ms 内未腾空（总线无 ACK / 接线 / 终端电阻）；
+     `2` = 外设未 Start。若为 `1`，说明帧根本没发出去，电机不转与总线物理层有关。
+  3. **仍需处理**：`Core/Src/can.c:249` 的 bus-off 掩码错误（见修改内容 2）；
+     `MX_FDCAN2_Init()` 的 `ExtFiltersNbr = 0`（见 V1.6.1 备注 2）。
+
+#### V1.6.1 - 2026-09-20
+- **修改类型**：修复（修复 CAN 从未启动导致的"电机不转"）
+- **涉及模块**：Core 层 / `Core/Src/main.c`；硬件驱动层 / `hardware/actuators/emm_5v.h`；应用层 / `Core/Src/app_freertos.c`（临时上车测试代码）
+- **修改内容**：
+  1. **`Core/Src/main.c` 补上 `fdcan2_UserInit()` 调用** —— 本工程最致命的一处历史缺陷。
+     `MX_FDCAN2_Init()`（`Core/Src/fdcan.c:60`）只走到 `HAL_FDCAN_Init()` 为止，该函数会把
+     `CCCR.INIT` 置 1，节点因此停在**配置态、根本不在总线上**；要 `HAL_FDCAN_Start()` 清掉
+     INIT 才算上线。而 `Core/Src/can.c:196` 的 `fdcan2_UserInit()` 做的正是
+     「配扩展帧滤波 + `HAL_FDCAN_Start()` + 开 FIFO0 中断」，**全工程却只有 `can.c:261`
+     的 bus-off 恢复回调在调用它**，上电路径从未调用（`git log -S fdcan2_UserInit` 确认：
+     该符号自初始提交起就只在 `can.h`/`can.c` 内出现）。
+     后果是硬性的：`HAL_FDCAN_AddMessageToTxFifoQ()` 的第一道门槛是
+     `hfdcan->State == HAL_FDCAN_STATE_BUSY`（HAL 源码 `stm32g4xx_hal_fdcan.c:2127`），
+     未 Start 时 State 恒为 `READY`，直接 `return HAL_ERROR`；`can_SendCmd()` 随即在
+     `can.c:108-115` 折算成 `can_error_step = 2` 并返回 0 —— **一个 CAN 帧都没发出去，
+     所有 `Emm_V5_*` 命令都是空动作**。之所以全程静默，是因为 `can.c:113` 的 `printf`
+     走 `Core/Src/syscalls.c:47` 的**弱符号** `__io_putchar`，全工程没有非弱实现，输出被丢弃。
+     调用点放在 `USER CODE BEGIN 2` 内（不放 CubeMX 管理区），并把原先追加在管理区里的
+     `#include "emm_5v.h"` 一并移入 `USER CODE BEGIN Includes`，避免 CubeMX 重新生成时被抹掉。
+  2. **`hardware/actuators/emm_5v.h` 补 `#include <stdbool.h>`**：该头文件的函数原型用了
+     `bool` 却不自包含。此前所有引用它的 TU 都先经 `hardware/Common_used.h`（内含 `stdbool.h`）
+     兜住，`main.c` 是唯一不经过 `Common_used.h` 的调用方，一 include 就报
+     `error: unknown type name 'bool'`。属头文件自包含性修复。
+  3. **`Core/Src/app_freertos.c` 的临时上车测试代码**（在 `StartDefaultTask` 内，验证完应删除）：
+     - `Emm_V5_Vel_Control(4,1,100,100,1)` → 末位 `snF` 由 `1` 改为 `0`。EMM_V5 协议中
+       `snF = 1` 表示「命令先存进同步缓冲区，等收到 `0xFF 0x66` 同步触发命令再执行」，
+       而此路径从不发触发命令，电机收到的是「待命」不是「转」；`snF = 0` 才是立即执行。
+       （对照 `hardware/actuators/Send_motor.c:20-25`：四路都传 0，其后那句
+       `Emm_V5_Synchronous_motion(0)` 其实是多余的。）
+     - `task_recive()` 暂时注释掉。它阻塞在 `xQueueReceive(..., portMAX_DELAY)`
+       （`app/banyuntask.c:35`），而 `task_send()` 全工程零调用（V1.4.0 备注 2）、队列恒空，
+       循环体会永远停在它上面，放在其后的下发一次都执行不到。
+     - 补 `osDelay(20)`：原写法是无延时 `for(;;)`，会以 FDCAN 满速（8 字节经典帧 @500kbps
+       约 3800 帧/秒）刷总线。
+- **影响范围**：**这是本工程第一次真正把 CAN 帧发出去** —— 在此之前所有 `Emm_V5_*`
+  电机命令都是空动作，舵机（TIM PWM）不受影响，正好对应「舵机动、电机不动」的现象。
+  接口签名一律未改；`app/` 内的测试代码属临时性质，验证完须还原 `task_recive()` 路径。
+- **验证状态**：已验证（编译层面）。
+  1. `cmake --build --preset Debug --clean-first` 全量重编，无 error；**无新增 warning**
+     （仅剩既有的 `ColorIdentif.c` 两处、`oled_data.c` 三处）；
+  2. 链接通过，`FLASH 45236 B / 8.63%`、`RAM 23960 B / 24.37%`；
+  3. **尚未上车验证电机是否真的转动**。需一并确认：CAN 总线接线与 120Ω 终端电阻、
+     4 号电机地址与波特率（`.ioc` 标称 500kbps）、驱动器是否已设为 CAN/通信控制模式。
+- **备注**：
+  1. **调试提示**：printf 无处可去（见修改内容 1），排查 CAN 请直接看 `Core/Src/can.c:7-8`
+     的 `can_error_step` / `can_error_count`（`Core/Inc/can.h:29-31` 已 extern）：
+     `0` = 正常；`1` = TX FIFO 20ms 内未腾空（总线无 ACK / 接线 / 终端电阻）；`2` = 外设未 Start
+     （即本轮修掉的那个）。
+  2. **未处理**：`MX_FDCAN2_Init()` 里 `StdFiltersNbr = 0; ExtFiltersNbr = 0;`，对应
+     `RXGFC.LSE = 0`，即扩展滤波表一个元素都没分配。`fdcan2_UserInit()` 里
+     `HAL_FDCAN_ConfigFilter(FilterIndex = 0)` 会往未分配的消息 RAM 区域写。当前
+     `USE_FULL_ASSERT` 未开（`Core/Inc/stm32g4xx_hal_conf.h:195` 已注释），`assert_param`
+     是空操作，故不报错也不生效。**若要用 `Emm_V5_Read_Status()` 收 CAN 回帧，需在 `.ioc`
+     里把 `ExtFiltersNbr` 设为 ≥ 1 并重新生成。**
+  3. `Emm_V5_En_Control(4,1,0)`（`Core/Src/app_freertos.c:89`）位于 `MX_FREERTOS_Init()`，即
+     `osKernelInitialize()` 之后、`osKernelStart()` 之前。`can_SendCmd()` 内部
+     `FDCAN_WaitFreeTxFifo()` 在 FIFO 满时会调 `osDelay(1)`，此时调度器未运行、行为未定义。
+     启动阶段 FIFO 为空不会走到该分支，故本轮未改动；后续若在此处追加发送命令需注意。
+  4. **兼容升级**，对上层无影响。
+
 #### V1.6.0 - 2026-09-18
 - **修改类型**：删除（移除整个循迹功能）
 - **涉及模块**：业务层 / `algorithm/`；应用层 / `app/`；调试 / `debug/`；硬件驱动层 / `hardware/sensors/QRcode.c`

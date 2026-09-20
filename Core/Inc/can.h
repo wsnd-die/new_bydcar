@@ -30,6 +30,14 @@ extern volatile uint32_t      can_error_step;
 extern volatile uint32_t      can_error_code;
 extern volatile uint32_t      can_error_count;
 extern volatile uint8_t       can_rx_flag;
+
+/* 总线物理状态快照 (由 HAL_FDCAN_ErrorCallback 更新)。调试时先看这三个:
+ *   can_psr      bit2:0 LEC (3 = ACK 错误, 发了没人应答), bit4:3 ACT, bit7 BO
+ *   can_psr_tec  发送错误计数, 没人 ACK 时每失败一帧 +8, 涨到 256 触发 bus-off
+ *   can_busoff_cnt 进入 bus-off 的次数 */
+extern volatile uint32_t      can_psr;
+extern volatile uint32_t      can_psr_tec;
+extern volatile uint32_t      can_busoff_cnt;
 extern FDCAN_RxHeaderTypeDef  can_rx_header;
 extern uint8_t                can_rx_data[8];
 
@@ -52,6 +60,12 @@ uint8_t Emm_V5_Is_Reached(uint8_t id);
 
 /** @brief  Start the FDCAN2 receive path (filters + notification). */
 void fdcan2_UserInit(void);
+
+/** @brief  bus-off 后重新初始化 FDCAN2。
+  * @warning 必须在**任务上下文**调用, 不能在中断里调用 —— 内部会关外设时钟并重配
+  *          RCC/GPIO/NVIC, 在 ISR 中重入 HAL 初始化风险很大。
+  * @retval 1 成功, 0 失败。 */
+uint8_t fdcan2_recover(void);
 
 #ifdef __cplusplus
 }

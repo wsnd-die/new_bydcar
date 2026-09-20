@@ -28,7 +28,7 @@
 
 #include "Common_used.h"    /* 工程聚合头: FreeRTOS / HAL / 各业务模块 */
 #include "worker_task.h"    /* FC_Task / NLF_Task / NLF_Request */
-
+#include "emm_5v.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,7 +63,7 @@ osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 128 * 4
+  .stack_size = 512 * 4
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,6 +86,14 @@ void MX_FREERTOS_Init(void) {
   /* 建系统事件队列。必须在创建任何任务之前 —— 调度器的 task_recive()
    * 依赖 systemEventQueue, 而它由本函数创建 (此前从未被调用, 故为 NULL)。 */
   task_init();
+
+  /* 注意: 这里**不能**发 CAN 命令。本函数在 osKernelStart() 之前执行, 而此刻
+   * pxCurrentTCB 仍是 NULL (tasks.c:337 初值, 直到第一个任务被创建才在
+   * prvAddNewTaskToDelayedList 里赋值)。can_SendCmd() → FDCAN_WaitFreeTxFifo()
+   * 在 TX FIFO 满时会调 osDelay(1), 而 osDelay 在 CMSIS-RTOS2 里对"调度器未启动"
+   * 没有任何保护, 会一路走到 vTaskDelay → prvAddCurrentTaskToDelayedList →
+   * uxListRemove(&(pxCurrentTCB->xStateListItem)) 直接 NULL 解引用 → HardFault。
+   * 使能命令改放到 StartDefaultTask 里发。 */
 
   /* USER CODE END Init */
 
@@ -130,27 +138,45 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* 事件调度器: 阻塞等事件, 按 Mode 转交 Worker 任务执行。
-   *
-   * 本任务刻意不承担任何阻塞式工作 —— 它一旦跑去导航, 就收不到后续事件了。
-   * 真正的执行体在 NLF_TASK (app/worker_task.c)。
-   *
-   * 原实现是个 osDelay(1) 空循环, 从未调用过 task_recive(); 配合 task_init()
-   * 从未被调用, 整个事件队列机制在此之前是空转的。 */
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);   /* 保留原有上电动作 */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
+
 
   for(;;)
   {
-    TaskCommand_t cmd = task_recive();
-    if (cmd.k) {
-      NLF_Request(cmd.Mode);
-    }
+    // TaskCommand_t cmd = task_recive();
+    // if (cmd.k) {
+    //   NLF_Request(cmd.Mode);
+    // }
+    // Emm_V5_Vel_Control(1, 1, 100, 0, 0);
+    // Emm_V5_Vel_Control(2, 1, 100, 0, 0);
+    // Emm_V5_Vel_Control(3, 1, 100, 0, 0);
+    // Emm_V5_Vel_Control(4, 1, 100, 0, 0);
+    osDelay(20);
   }
   /* USER CODE END StartDefaultTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+/**
+  * @brief  栈溢出钩子 (configCHECK_FOR_STACK_OVERFLOW = 2 时由内核调用)。
+  * @param  xTask       溢出任务的句柄
+  * @param  pcTaskName  任务名
+  * @note   这里刻意停住而不是复位: 用调试器可以直接看到是哪条任务、栈用了多少。
+  *         比"随机跳 HardFault"可诊断得多。历史上本工程的栈溢出是完全静默的。
+  */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+  (void)xTask;
+
+  taskDISABLE_INTERRUPTS();
+  /* 留一个可断点的位置: 断在这里, 看 pcTaskName 就知道是谁溢出了。 */
+  for (;;)
+  {
+    __NOP();
+  }
+}
 
 /* USER CODE END Application */
 
