@@ -1,4 +1,4 @@
-    `/**
+/**
  * @file color.c
  * @brief 颜色传感器 — GY-33 / OpenMV 双驱动
  *   - USE_OPENMV_COLOR 0: GY-33,  帧: 5A 5A type qty data[qty] chk

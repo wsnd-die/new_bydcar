@@ -109,41 +109,5 @@ uint8_t Slop_dirjang(Jang_type jang)
 
 
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
 
-    if (huart->Instance == USART1) {
-        /* 注: V1.6.0 前这里还有两级调参命令分流 (# 行给 trace_tune, $ 行给
-         * GrayTrace)。两个循迹模块连同它们的调参工具已整体移除, 故一并删掉 ——
-         * 驱动层的中断回调不应依赖调试/业务模块。 */
-        if (qrcode_rx_len >= QRCODE_RX_BUF_SIZE) {
-            qrcode_rx_len = 0;
-        }
 
-        qrcode_rx_buf[qrcode_rx_len++] = qrcode_rx_byte;
-        if(qrcode_rx_byte==0x0d)
-        {
-            QR_Flag=1;
-            qrcode_rx_len=0;
-        }
-
-        HAL_UART_Receive_IT(&huart1, &qrcode_rx_byte, 1);
-    }
-    else if (huart->Instance == USART3) {
-        K230_RxProcessByte();
-    }
-
-}
-void QRcode_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART3) {
-        K230_RxRestart();
-        return;
-    }
-    if (huart->Instance != USART1) {
-        return;
-    }
-
-    __HAL_UART_CLEAR_FLAG(&huart1, UART_CLEAR_OREF | UART_CLEAR_FEF | UART_CLEAR_NEF);
-    HAL_UART_Receive_IT(&huart1, &qrcode_rx_byte, 1);
-}

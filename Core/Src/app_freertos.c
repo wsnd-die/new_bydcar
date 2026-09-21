@@ -29,6 +29,7 @@
 #include "Common_used.h"    /* 工程聚合头: FreeRTOS / HAL / 各业务模块 */
 #include "worker_task.h"    /* FC_Task / NLF_Task / NLF_Request */
 #include "emm_5v.h"
+#include "ops9_g491_uart3.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,6 +66,13 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 512 * 4
 };
+/* Definitions for ops9imu_task */
+osThreadId_t ops9imu_taskHandle;
+const osThreadAttr_t ops9imu_task_attributes = {
+  .name = "ops9imu_task",
+  .priority = (osPriority_t) osPriorityHigh,
+  .stack_size = 256 * 4
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -72,6 +80,7 @@ const osThreadAttr_t defaultTask_attributes = {
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
+void ops9imu_fuction(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -86,6 +95,7 @@ void MX_FREERTOS_Init(void) {
   /* 建系统事件队列。必须在创建任何任务之前 —— 调度器的 task_recive()
    * 依赖 systemEventQueue, 而它由本函数创建 (此前从未被调用, 故为 NULL)。 */
   task_init();
+
 
   /* 注意: 这里**不能**发 CAN 命令。本函数在 osKernelStart() 之前执行, 而此刻
    * pxCurrentTCB 仍是 NULL (tasks.c:337 初值, 直到第一个任务被创建才在
@@ -116,6 +126,9 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* creation of ops9imu_task */
+  ops9imu_taskHandle = osThreadNew(ops9imu_fuction, NULL, &ops9imu_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* Worker 任务。架构: 驱动源 → defaultTask 调度器 → Worker 任务,
@@ -152,13 +165,38 @@ void StartDefaultTask(void *argument)
     // if (cmd.k) {
     //   NLF_Request(cmd.Mode);
     // }
-    // Emm_V5_Vel_Control(1, 0, 100, 0, 0);
-    // Emm_V5_Vel_Control(2, 0, 100, 0, 0);
-    // Emm_V5_Vel_Control(3, 1, 100, 0, 0);
-    // Emm_V5_Vel_Control(4, 1, 100, 0, 0);
+
+    // Emm_V5_Vel_Control(1, 0, 0, 0, 0);
+    // Emm_V5_Vel_Control(2, 0, 0, 0, 0);
+    // Emm_V5_Vel_Control(3, 1, 0, 0, 0);
+    // Emm_V5_Vel_Control(4, 1, 0, 0, 0);
     osDelay(20);
   }
   /* USER CODE END StartDefaultTask */
+}
+
+/* USER CODE BEGIN Header_ops9imu_fuction */
+/**
+* @brief Function implementing the ops9imu_task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ops9imu_fuction */
+void ops9imu_fuction(void *argument)
+{
+  /* USER CODE BEGIN ops9imu_fuction */
+  /* Infinite loop */
+  const LocatorDev_t *active_locator = &locator_ops9;
+  PoseData_t o_pose;
+  active_locator->init();
+  for(;;)
+  {
+    active_locator->update();
+    active_locator->get_pose(&o_pose);
+    printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+    osDelay(10);
+  }
+  /* USER CODE END ops9imu_fuction */
 }
 
 /* Private application code --------------------------------------------------*/

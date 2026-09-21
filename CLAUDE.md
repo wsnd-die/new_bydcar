@@ -298,6 +298,48 @@ active_locator->get_pose(&robot_pose);
 
 ## 变更日志（持续追加）
 
+#### V1.8.2 - 2026-09-20
+- **修改类型**：修复（printf 重定向失效 —— 重定向点用错）
+- **涉及模块**：Core 层 / `Core/Src/main.c`（`USER CODE BEGIN 4` 区）
+- **修改内容**：
+  `main.c:185` 此前只定义了 `fputc()` 做 printf 重定向，**在本工具链下完全不生效**。
+  本工程用 **GCC + newlib-nano**（`CMakeLists.txt:171` `-specs=nano.specs`），newlib 的
+  `printf` 调用链是：
+  ```
+  printf → _vfprintf_r → __sfvwrite_r → _write_r → _write → __io_putchar
+  ```
+  **完全不经过 `fputc`** —— `fputc` 是 Keil MDK / IAR 那套 C 库的重定向点。
+  而 `Core/Src/syscalls.c:47` 的 `__io_putchar()` 是 `__attribute__((weak))` 的空实现，
+  全工程没有强符号覆盖它，于是 printf 输出被静默丢弃。
+  （`syscalls.c` 的注释其实已写明预期用法：在别处定义**非弱**的 `__io_putchar()`。）
+  现新增强符号 `__io_putchar()`（`main.c` 的 `USER CODE BEGIN 4` 区，不会 CubeMX 被冲掉），
+  输出到 `huart2`；`fputc()` 保留并加注说明（Keil/IAR 工程仍可用，本工具链下 printf 不调它）。
+- **影响范围**：**printf 输出从此真正可达串口**。此前所有 `printf` 都是空操作 ——
+  包括 `Core/Src/can.c` 里 CAN 发送失败时的 `CANfail addr=... step=... cnt=...` 诊断，
+  这是排查 CAN 不通时一直"看不到任何报错"的直接原因。
+  接口签名未改，**兼容升级**。
+- **验证状态**：已验证（符号层面）。
+  1. `cmake --build --preset Debug --clean-first` 无 error、**无新增 warning**；
+  2. `nm` 确认：`__io_putchar` 为 **`T`（强符号）**，`_write` 为 `W`（弱，syscalls.c），
+     链接期强符号胜出；`fputc` **不在符号表内**（无调用者，被 `--gc-sections` 回收）——
+     反证 printf 不走 fputc；
+  3. `FLASH 44960 B / 8.58%`、`RAM 10664 B / 10.85%`。
+  4. **尚未上车确认串口实际收到数据。**
+- **备注**：
+  1. **输出口是 `huart2`（PA2/PA3，115200）** —— 串口助手要接这一路。
+  2. **`HAL_UART_Transmit` 是阻塞式的，超时 1000 ms，且逐字节发送** ——
+     一条长字符串会长时间占住调用任务。若将来在高频任务（如 FC_TASK）里 printf，
+     应改用 DMA 或环缓冲，不要直接阻塞。
+  3. **不要在 `Error_Handler()` 里 printf** —— 那里 `__disable_irq()`，`HAL_UART_Transmit`
+     依赖中断/超时机制，会直接卡死。
+  4. **调度器启动前也不安全**：`SystemClock_Config()` 失败时 `huart2` 尚未初始化
+     （`MX_USART2_UART_Init()` 在 `main.c` 更靠后），此时 `HAL_UART_Transmit` 会返回错误
+     而不会崩，但也没有输出。
+  5. **与栈的关系**：newlib 的 `vfprintf` 栈开销不小，而 `defaultTask` 栈只有 512 B
+     （见 V1.6.2）。开 printf 之后这条路径更容易溢栈，建议把 `.stack_size` 提到 2048
+     （同样应改在 `.ioc` 里，否则 CubeMX 重新生成会冲掉）。
+  6. 若需要 `scanf`/串口输入，同理需定义非弱 `__io_getchar()`。
+
 #### V1.8.1 - 2026-09-18
 - **修改类型**：优化（应用层接线：FC_TASK 改经 `imu_hwt906` 实例访问 HWT906）
 - **涉及模块**：应用层 / `app/worker_task.c`

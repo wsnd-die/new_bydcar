@@ -153,21 +153,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     }
 }
 
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART1) {
-        /* USART1(扫码口): 错误后必须重挂接收, 否则 QR_Flag 永远不置位,
-         * Qr_Get() 无限等待, 扫码后不执行下一步 */
-        QRcode_UART_ErrorCallback(huart);
-    }
-    else if (huart->Instance == USART2) {
-        __HAL_UART_CLEAR_FLAG(&huart2, UART_CLEAR_OREF | UART_CLEAR_FEF | UART_CLEAR_NEF);
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart2, dma_rx_buf, DMA_RX_BUF_SIZE);
-    }
-    else if (huart->Instance == USART3) {
-        K230_RxRestart();
-    }
-}
+
 #endif
 
 void UART2_StartDMAReceive(void)
