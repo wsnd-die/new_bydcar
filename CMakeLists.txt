@@ -123,6 +123,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # GLOB_RECURSE, 但 include 路径没有递归形式。
     hardware/sensors
     hardware/actuators
+    hardware/actuators/scslib
     hardware/display
     hardware/bus
     Drivers/STM32G4xx_HAL_Driver/Inc
