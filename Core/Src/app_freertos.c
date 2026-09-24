@@ -30,6 +30,7 @@
 #include "worker_task.h"    /* FC_Task / NLF_Task / NLF_Request */
 #include "emm_5v.h"
 #include "ops9_g491_uart3.h"
+#include "servo_scs.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,6 +40,46 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+/* ── 总线上的 6 个舵机 (UART5) ────────────────────────────────────────
+ * @note 这几个 #define 必须放在 USER CODE 区里 —— 放到 gripper_task 上方那一段
+ *       (USER CODE END Header_gripper_task 与函数签名之间) 属于生成区，
+ *       CubeMX 重新生成会**静默删掉**。
+ *
+ * @warning **ID 1 与 ID 2~6 属于两个不同的系列，必须用两套不同的 API 驱动。**
+ *          这不是代码风格问题，是寄存器布局问题：
+ *
+ *          ID 1  STS3032  → SMS_STS 系列
+ *              起始地址 41(ACC)，一次写 7 字节 [ACC|位置|时间|速度]
+ *              位置量程 **0~4095** 对应 0~360°，中位 **2048**
+ *              → `SCS_WritePosEx(id, pos, speed, acc)`
+ *
+ *          ID 2~6 SCS0009 → SCSCL 系列（厂商型号表 `5,4,4,1,SCS009`）
+ *              起始地址 42(GOAL_POSITION)，一次写 6 字节 [位置|时间|速度]
+ *              位置量程 **0~1000** 对应 0~300°，中位 **500**
+ *              → `SCS_WritePos(id, pos, time, speed)`
+ *
+ *          把 SCS0009 交给 `SCS_WritePosEx()` 的后果：ACC 字节会落到 SCSCL 未
+ *          定义的 41 号地址上，位置还会超出 0~1000 的量程。**不会报错，只是不动。**
+ *          详见 servo_scs.h 各自接口的 @note。 */
+#define SERVO_ID_STS3032      1      /* STS3032, SMS_STS 系列 */
+#define SERVO_ID_SCS0009_MIN  2      /* SCS0009, SCSCL 系列 */
+#define SERVO_ID_SCS0009_MAX  6
+
+
+/* 两套量程各自的参数。中位与速度单位都不是同一套，别互相抄。
+ *
+ * @warning **这两个 CENTER 必须取各自量程的中段，绝不能贴住量程两端。**
+ *          位置寄存器是单圈绝对值 —— 0 与量程上限在物理上是**相邻的同一个点**。
+ *          目标位置停在那里时，手推几度就会让读数从一端跳到另一端，位置环把
+ *          误差算成「差一整圈」，于是顺着你推的方向转满一圈才回来。
+ *          取 0 / 2 / 4095 这类值，即使字节序修好了，该现象**依然会出现**。 */
+#define STS_CENTER     2048    /* STS3032: 0~4095 的中位 */
+#define STS_SPEED       0    /* 原始寄存器值，单位见 STS3032 数据手册 */
+#define STS_ACC         0      /* 原始寄存器值，0 = 不控加速度直冲最高速 */
+#define SCS_CENTER     450     /* SCS0009: 0~1024 的中位（0.293°/步，全行程 300°） */
+#define SCS_SPEED       0    /* 原始寄存器值，0 = 用寄存器内部值 */
+#define SCS_TIME        0       /* 0 = 用寄存器内部值 */
 
 /* USER CODE END PD */
 
@@ -73,14 +114,24 @@ const osThreadAttr_t ops9imu_task_attributes = {
   .priority = (osPriority_t) osPriorityHigh,
   .stack_size = 256 * 4
 };
+/* Definitions for gripper */
+osThreadId_t gripperHandle;
+const osThreadAttr_t gripper_attributes = {
+  .name = "gripper",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 256 * 4
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+
+static void servo_set_pos(uint8_t id, uint16_t pos);
 
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
 void ops9imu_fuction(void *argument);
+void gripper_task(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -129,6 +180,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of ops9imu_task */
   ops9imu_taskHandle = osThreadNew(ops9imu_fuction, NULL, &ops9imu_task_attributes);
+
+  /* creation of gripper */
+  gripperHandle = osThreadNew(gripper_task, NULL, &gripper_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* Worker 任务。架构: 驱动源 → defaultTask 调度器 → Worker 任务,
@@ -193,14 +247,82 @@ void ops9imu_fuction(void *argument)
   {
     active_locator->update();
     active_locator->get_pose(&o_pose);
-    printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+    // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
     osDelay(10);
   }
   /* USER CODE END ops9imu_fuction */
 }
 
+/* USER CODE BEGIN Header_gripper_task */
+/**
+* @brief Function implementing the gripper thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_gripper_task */
+void gripper_task(void *argument)
+{
+  /* USER CODE BEGIN gripper_task */
+  /* ── 总线初始化 ────────────────────────────────────────────────────
+   * 串口助手接 huart2 (PA2/PA3, 115200) 看 printf 输出。
+   * 常量见本文件 USER CODE BEGIN PD 区。 */
+  if (!SCS_BusInit()) {
+    /* huart5.Instance == NULL —— MX_UART5_Init() 没跑，见变更记录 V1.10.0 备注 2 */
+    printf("[scs] bus init FAIL: huart5 not initialized\r\n");
+    for (;;) { osDelay(100); }
+  }
+
+  servo_set_pos(SERVO_ID_STS3032, STS_CENTER);
+  for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
+    servo_set_pos(id, SCS_CENTER);
+  }
+
+
+  for (;;)
+  {
+    /* ── 在这里写你的舵机控制逻辑 ────────────────────────────────────
+     * 用 servo_set_pos() 就行，它会按 ID 自动分派到正确的系列上：
+     *
+     *     servo_set_pos(1, 1000);   // STS3032 → 量程 0~4095
+     *     servo_set_pos(3, 700);    // SCS0009 → 量程 0~1000
+     *
+     * 需要分别控制速度/时间/加速度时，直接调底层接口（注意量程与单位不同）：
+     *
+     *     SCS_WritePosEx(1, pos, speed, acc);   // 仅 STS3032
+     *     SCS_WritePos(2, pos, time, speed);    // 仅 SCS0009
+     *
+     * 回读用 FeedBack 一次取全，再 ReadXxx(-1) 从缓冲区拿，不额外占总线：
+     *
+     *     SCS_FeedBack(1);
+     *     if (SCS_GetLastError() == 0) { int p = SCS_ReadPos(-1); }
+     */
+    osDelay(20);
+  }
+  /* USER CODE END gripper_task */
+}
+
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+/**
+  * @brief  按系列分派的位置控制 —— 上层不必记住哪个 ID 是哪个系列。
+  * @param  id   舵机 ID：1 = STS3032(SMS_STS 系列)，2~6 = SCS0009(SCSCL 系列)
+  * @param  pos  目标位置。**量程由系列决定，两者不能混用**：
+  *              STS3032 是 0~4095（中位 2048），SCS0009 是 0~1000（中位 500）。
+  * @note   速度/加速度取 PD 区里各自系列的常量，本函数不暴露这几个参数；
+  *         需要单独调速时直接调 SCS_WritePosEx() / SCS_WritePos()。
+  * @note   两个系列不能互换 API：把 SCS0009 交给 SCS_WritePosEx() 会把 ACC
+  *         字节写到 SCSCL 未定义的 41 号地址，且位置超出 0~1000 量程 ——
+  *         不报错，只是不动。原因见本文件 PD 区的说明。
+  */
+static void servo_set_pos(uint8_t id, uint16_t pos)
+{
+  if (id == SERVO_ID_STS3032) {
+    (void)SCS_WritePosEx(id, (int16_t)pos, STS_SPEED, STS_ACC);
+  } else {
+    (void)SCS_WritePos(id, pos, SCS_TIME, SCS_SPEED);
+  }
+}
 
 /**
   * @brief  栈溢出钩子 (configCHECK_FOR_STACK_OVERFLOW = 2 时由内核调用)。
