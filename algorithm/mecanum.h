@@ -10,8 +10,8 @@ extern "C" {
 #endif
 
 /* ======================== 麦轮底盘几何参数 ======================== */
-#define MEC_WHEELBASE       0.176f   /* 轴距 m（前后轮中心距）*/
-#define MEC_TRACK_WIDTH     0.1564f   /* 轮距 m（左右轮中心距）*/
+#define MEC_WHEELBASE       0.181f   /* 轴距 m（前后轮中心距）*/
+#define MEC_TRACK_WIDTH     0.164f   /* 轮距 m（左右轮中心距）*/
 #define MEC_WHEEL_RADIUS    3.75f  /* 轮子半径 cm（=37.5mm，与 Mecanum_Move.c 的 wheel_radius_m=0.0375 一致）*/
 #define MEC_SPEED_COEFF     224.058f /* 速度换算系数 (m/s → RPM) */
 #define MEC_STOP_THRESHOLD  1e-3f    /* 静止判断阈值 */
@@ -60,28 +60,14 @@ uint8_t Mecanum_Read_Speed(uint8_t id, int16_t *rpm, uint32_t timeout_ms);
 uint8_t Mecanum_Read_Position(uint8_t id, int32_t *pos, uint32_t timeout_ms);
 uint8_t Mecanum_Read_AllPositions(EncoderData *enc, uint32_t timeout_ms);
 
-/* ======================== 里程计自动标定 ======================== */
-typedef enum {
-    CALIB_IDLE = 0,
-    CALIB_FWD,        /* 前进 1m */
-    CALIB_RIGHT,      /* 右移 1m */
-    CALIB_DONE        /* 完成 */
-} CalibState;
+/* ============ 编码器脉冲 → 毫米 ============ */
 
-typedef struct {
-    CalibState  state;
-    EncoderData enc_start;    /* 每段起点编码器 */
-    float       tbp_x0, tbp_y0;  /* 每段起点 TBOP (mm) */
-    float       scale_x, scale_y; /* 标定结果: mm/encoder_count */
-    float       target_dist_mm;   /* 目标距离 mm, 默认 1000 */
-    float       speed;            /* 标定速度 m/s, 默认 0.15 */
-} OdometryCalib;
-
-extern OdometryCalib g_calib;
-
-void Odometry_Calib_Start(void);
-void Odometry_Calib_Update(void);
-bool Odometry_Is_Calibrated(void);
+/**
+  * @brief  编码器增量(脉冲) → 实际位移(mm)
+  * @note   唯一的换算口，device/drv_wheel_odom.c 每次推算都经此。
+  *         V1.14.0 起只有粗略估算一条路径（R=3.75cm, 3200脉冲/圈），
+  *         原 TBOP 标定分支已随标定整块移除。
+  */
 void Odometry_Apply_Calib(float enc_dx, float enc_dy, float *mm_x, float *mm_y);
 
 #ifdef __cplusplus

@@ -139,6 +139,20 @@ const osThreadAttr_t gripper_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 256 * 4
 };
+/* Definitions for findcircle_TASK */
+osThreadId_t findcircle_TASKHandle;
+const osThreadAttr_t findcircle_TASK_attributes = {
+  .name = "findcircle_TASK",
+  .priority = (osPriority_t) osPriorityLow,
+  .stack_size = 256 * 4
+};
+/* Definitions for nav_task */
+osThreadId_t nav_taskHandle;
+const osThreadAttr_t nav_task_attributes = {
+  .name = "nav_task",
+  .priority = (osPriority_t) osPriorityHigh,
+  .stack_size = 256 * 4
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -150,6 +164,8 @@ static void servo_set_pos(uint8_t id, uint16_t pos);
 void StartDefaultTask(void *argument);
 void ops9imu_fuction(void *argument);
 void gripper_task(void *argument);
+void FC_TASK(void *argument);
+void NLF_TASK(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -202,17 +218,14 @@ void MX_FREERTOS_Init(void) {
   /* creation of gripper */
   gripperHandle = osThreadNew(gripper_task, NULL, &gripper_attributes);
 
+  /* creation of findcircle_TASK */
+  findcircle_TASKHandle = osThreadNew(FC_TASK, NULL, &findcircle_TASK_attributes);
+
+  /* creation of nav_task */
+  nav_taskHandle = osThreadNew(NLF_TASK, NULL, &nav_task_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
-  /* Worker 任务。架构: 驱动源 → defaultTask 调度器 → Worker 任务,
-   * 见 app/banyuntask.h 与 app/worker_task.h。
-   *
-   * @note FC_TASK 是本工程 HWT906 的唯一轮询者 (worker_task.c:89) —— 在它被
-   *       创建之前, imu_hwt906.update() 没有任何周期性调用者, IMU 驱动被
-   *       --gc-sections 整段回收、根本不在 .elf 里。
-   *
-   * @warning 堆必须够。configTOTAL_HEAP_SIZE 见 Core/Inc/FreeRTOSConfig.h:72
-   *          (V1.12.0 由 8096 提到 16384)。若不够, osThreadNew 返回 NULL,
-   *          而 configASSERT 是关中断死循环 —— 表现为上电即卡死且无任何提示。 */
+
   fcTaskHandle  = osThreadNew(FC_Task,  NULL, &fcTask_attributes);
   nlfTaskHandle = osThreadNew(NLF_Task, NULL, &nlfTask_attributes);
   /* USER CODE END RTOS_THREADS */
@@ -333,6 +346,42 @@ void gripper_task(void *argument)
     osDelay(20);
   }
   /* USER CODE END gripper_task */
+}
+
+/* USER CODE BEGIN Header_FC_TASK */
+/**
+* @brief Function implementing the findcircle_TASK thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_FC_TASK */
+void FC_TASK(void *argument)
+{
+  /* USER CODE BEGIN FC_TASK */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END FC_TASK */
+}
+
+/* USER CODE BEGIN Header_NLF_TASK */
+/**
+* @brief Function implementing the nav_task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_NLF_TASK */
+void NLF_TASK(void *argument)
+{
+  /* USER CODE BEGIN NLF_TASK */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END NLF_TASK */
 }
 
 /* Private application code --------------------------------------------------*/

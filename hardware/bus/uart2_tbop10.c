@@ -137,7 +137,14 @@ void UART2_FSM_Parse_Byte(uint8_t byte)
 }
 
 volatile uint32_t dbg_rx_cb = 0;  /* CALLBACK 入口计数 */
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+
+/* USART2 的 DMA-IDLE 接收事件处理。
+ *
+ * 【V1.14.1 改名】原名为 HAL_UARTEx_RxEventCallback —— 那是 HAL 的 weak 回调，
+ * 全工程只能有一个定义。USART3 (OPS9) 也改用 DMA-IDLE 接收后同样需要它，故本函数
+ * 降为普通函数，由 Core/Src/usart.c 里唯一的分发器按 Instance 转发。
+ * 依赖方向: Core → hardware，不反向。 */
+void UART2_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
     dbg_rx_cb++;
     if (huart->Instance == USART2) {

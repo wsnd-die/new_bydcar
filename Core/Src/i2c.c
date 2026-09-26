@@ -136,7 +136,13 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
 
     __HAL_LINKDMA(i2cHandle,hdmarx,hdma_i2c3_rx);
 
+    /* I2C3 interrupt Init */
+    HAL_NVIC_SetPriority(I2C3_ER_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(I2C3_ER_IRQn);
   /* USER CODE BEGIN I2C3_MspInit 1 */
+
+  HAL_NVIC_SetPriority(I2C3_ER_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(I2C3_ER_IRQn);
 
   /* USER CODE END I2C3_MspInit 1 */
   }
@@ -163,6 +169,9 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 
     /* I2C3 DMA DeInit */
     HAL_DMA_DeInit(i2cHandle->hdmarx);
+
+    /* I2C3 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(I2C3_EV_IRQn);
   /* USER CODE BEGIN I2C3_MspDeInit 1 */
 
   /* USER CODE END I2C3_MspDeInit 1 */

@@ -21,7 +21,7 @@
 #include "usart.h"
 
 /* USER CODE BEGIN 0 */
-
+#include "uart2_tbop10.h"   /* UART2_RxEventCallback + LEGACY_USART2_ODOM_ENABLE */
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart4;
@@ -640,13 +640,29 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 }
 
 /* USER CODE BEGIN 1 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
 
-  if (huart->Instance == USART3) {
-    OPS9_G491_UART3_RxCpltCallback(&huart3);
+/* ── HAL UART 接收事件的【唯一】分发器 ────────────────────────────────────
+ * HAL_UARTEx_RxEventCallback 是 HAL 的 weak 回调，全工程只能有一个定义。
+ * 原来这个定义在 hardware/bus/uart2_tbop10.c 里（只管 USART2）；USART3 改用
+ * DMA-IDLE 接收后两个驱动都需要它，故把定义收到这里做纯分发，各驱动只导出
+ * 普通函数（UART2_RxEventCallback / OPS9_G491_UART3_RxEventCallback）。
+ * 依赖方向: Core → device / hardware，不反向。
+ *
+ * 注意: HAL_UART_RxCpltCallback 不再定义 —— USART2/USART3 都走 DMA-IDLE，
+ *      不会再走 RxCplt 路径，保留一个空定义只会挡住别的串口将来用 IT 收。
+ * ---------------------------------------------------------------------- */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+  if (huart->Instance == USART2) {
+#if LEGACY_USART2_ODOM_ENABLE
+    UART2_RxEventCallback(huart, Size);
+#endif
+  }
+  else if (huart->Instance == USART3) {
+    OPS9_G491_UART3_RxEventCallback(huart, Size);
   }
 }
+
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
 

@@ -1,11 +1,10 @@
 #include "ops9_g491_uart3.h"
 #include <string.h>
 #include "usart.h"   /* CubeMX 生成的 huart3 句柄，供 locator_ops9.init() 挂接 */
-static UART_HandleTypeDef s_owned_huart3;
 static UART_HandleTypeDef *s_huart = NULL;
 
 static ops9_t s_ops9;
-static uint8_t s_rx_byte;
+static uint8_t s_dma_rx_buf[64];
 static volatile uint8_t s_new_data = 0;
 
 
@@ -225,12 +224,30 @@ static void ops9_on_frame(const ops9_data_t *data, void *user)
     s_new_data = 1u;
 }
 
-static HAL_StatusTypeDef start_rx_it(void)
+static HAL_StatusTypeDef start_rx_dma(void)
 {
+    HAL_StatusTypeDef st;
+
     if (s_huart == NULL)
         return HAL_ERROR;
 
-    return HAL_UART_Receive_IT(s_huart, &s_rx_byte, 1u);
+    /* ORE/FE/NE 未清时重挂会立刻再报错（同 hardware/bus/uart2_tbop10.c 的先例） */
+    __HAL_UART_CLEAR_FLAG(s_huart, UART_CLEAR_OREF | UART_CLEAR_FEF | UART_CLEAR_NEF);
+
+    /* 用 DMA-IDLE 而非定长 Receive_DMA：OPS9 一帧 OPS9_FRAME_SIZE = 28 字节，
+     * 定长接收要凑满整个缓冲（64B）才回调，尾部那点数据会一直压在缓冲里不被
+     * 处理；流一停就彻底卡住。IDLE 一到就回调，变长帧才对得上。 */
+    st = HAL_UARTEx_ReceiveToIdle_DMA(s_huart, s_dma_rx_buf,
+                                      (uint16_t)sizeof(s_dma_rx_buf));
+    if (st != HAL_OK)
+        return st;
+
+    /* ReceiveToIdle_DMA 内部走 HAL_DMA_Start_IT，会把半传输(HT)中断一并打开；
+     * 缓冲收到一半时 UART_DMARxHalfCplt 同样触发 RxEvent，会把一次接收切成
+     * 两截。本驱动按「总线 IDLE + 收满」两种事件处理，不需要 HT。 */
+    __HAL_DMA_DISABLE_IT(&hdma_usart3_rx, DMA_IT_HT);
+
+    return HAL_OK;
 }
 
 HAL_StatusTypeDef OPS9_G491_UART3_Attach(UART_HandleTypeDef *huart)
@@ -246,7 +263,7 @@ HAL_StatusTypeDef OPS9_G491_UART3_Attach(UART_HandleTypeDef *huart)
      * 防止之前存在未清状态导致第一次接收失败。
      * HAL UART 错误标志在 IRQ 中会继续处理；这里直接启动即可。
      */
-    return start_rx_it();
+    return start_rx_dma();
 }
 
 
@@ -256,15 +273,16 @@ UART_HandleTypeDef *OPS9_G491_UART3_GetHandle(void)
 }
 
 
-void OPS9_G491_UART3_RxCpltCallback(UART_HandleTypeDef *huart)
+void OPS9_G491_UART3_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size)
 {
     if (s_huart == NULL || huart != s_huart)
         return;
 
-    ops9_input_byte(&s_ops9, s_rx_byte);
+    ops9_input(&s_ops9, s_dma_rx_buf, Size);
 
-    /* 连续接收下一个字节 */
-    (void)start_rx_it();
+    /* 重挂接收，等下一批。Size 是本次已收到的字节数，帧被跨回调切分不影响
+     * 解析 —— ops9_input 喂的是状态机，状态跨调用保持。 */
+    (void)start_rx_dma();
 }
 
 void OPS9_G491_UART3_ErrorCallback(UART_HandleTypeDef *huart)
@@ -273,11 +291,11 @@ void OPS9_G491_UART3_ErrorCallback(UART_HandleTypeDef *huart)
         return;
 
     /*
-     * HAL 在 ORE / FE / NE 等错误后可能停止当前 IT 接收。
-     * 先终止接收，再重新启动。
+     * HAL 在 ORE / FE / NE 等错误后可能停止当前 DMA 接收（RxState 不再回到
+     * READY）。先终止本次接收把状态复位，再重新挂上。
      */
     (void)HAL_UART_AbortReceive(huart);
-    (void)start_rx_it();
+    (void)start_rx_dma();
 }
 
 uint8_t OPS9_G491_UART3_GetLatest(ops9_data_t *out)

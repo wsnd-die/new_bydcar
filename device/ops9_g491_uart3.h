@@ -83,8 +83,13 @@ uint8_t ops9_send_set_y(ops9_tx_callback_t tx, void *user, float y_mm);         
  *    此时 CubeMX 中请把 USART3 配成 PB10 TX / PE15 RX，并打开 USART3 中断。
  */
 
-/* 挂接到 CubeMX/用户已经初始化好的 USART3 句柄，并启动 1 字节中断接收。 */
+/* 挂接到 CubeMX/用户已经初始化好的 USART3 句柄，并启动 DMA-IDLE 接收。 */
 HAL_StatusTypeDef OPS9_G491_UART3_Attach(UART_HandleTypeDef *huart);
+
+/* CubeMX 在 Core/Src/usart.c 生成的 USART3 RX DMA 句柄（DMA1_Channel2）。
+ * 本驱动用它在每次重挂接收后关掉半传输中断，见 start_rx_dma()。
+ * 声明方式沿用 hardware/bus/uart2_tbop10.h 对 hdma_usart2_rx 的先例。 */
+extern DMA_HandleTypeDef hdma_usart3_rx;
 
 /* 当前驱动使用的 UART 句柄。 */
 UART_HandleTypeDef *OPS9_G491_UART3_GetHandle(void);
@@ -94,10 +99,9 @@ UART_HandleTypeDef *OPS9_G491_UART3_GetHandle(void);
  * 如果 CubeMX 的 USART3_IRQHandler 已经调用 HAL_UART_IRQHandler(&huart3)，
  * 则不要重复调用此函数。
  */
-void OPS9_G491_UART3_IRQHandler(void);
 
-/* 放进 HAL_UART_RxCpltCallback()。 */
-void OPS9_G491_UART3_RxCpltCallback(UART_HandleTypeDef *huart);
+/* 由 Core/Src/usart.c 的 HAL_UARTEx_RxEventCallback() 分发器按 Instance 调用。 */
+void OPS9_G491_UART3_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size);
 
 /* 放进 HAL_UART_ErrorCallback()，发生 ORE/FE/NE 后自动重启接收。 */
 void OPS9_G491_UART3_ErrorCallback(UART_HandleTypeDef *huart);

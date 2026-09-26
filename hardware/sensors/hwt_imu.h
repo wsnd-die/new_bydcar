@@ -36,10 +36,20 @@
  *          float yaw = g_hwt_imu_yaw_rad;
  *          float wz  = g_hwt_imu_gyro_z_rad;
  *
- * @note    读数据用阻塞式 HAL_I2C_Mem_Read。Core/Src/i2c.c:137 其实已经配好
- *          并链接了 I2C3 的 RX DMA 通道, 但本驱动没有用它 —— 26 字节量级
- *          DMA 收益不明显, 却要额外引入传输完成同步。
- *          阻塞时间的上界受 HWT_IMU_TIMEOUT_MS 约束。
+ * @note    【V1.14.2 起】读数据走 I2C3 + DMA：HAL_I2C_Mem_Read_DMA() 启动传输，
+ *          由 I2C3_EV/ER 中断推进，本驱动用二值信号量等完成回调后才返回。
+ *          对外仍是「阻塞到数据到手」的语义，上界受 HWT_IMU_TIMEOUT_MS 约束。
+ *
+ *          原先这里写着「读数据用阻塞式 HAL_I2C_Mem_Read …… 26 字节量级 DMA
+ *          收益不明显, 却要额外引入传输完成同步」。那半句是对的：26B @400kHz
+ *          只有约 0.65ms。改用 DMA 换来的不是速度，而是让地址相位与收尾由中断
+ *          承担、把等待交还给调度器；代价是必须补上 I2C3_EV/ER 的 NVIC 与
+ *          IRQHandler（Core/Src/i2c.c 的 I2C3_MspInit、Core/Src/stm32g4xx_it.c），
+ *          否则传输永远完不成、hi2c3.State 卡在 BUSY_RX。
+ *
+ * @warning HWT_IMU_Poll() / HWT_IMU_ReadReg() **只能在任务上下文调用**
+ *          （内部要 acquire 信号量）。目前唯一调用者是 FC_TASK。
+ *          调度器未启动时会自动退化为轮询 HAL 状态机，不会崩。
  */
 
 #ifndef __HWT_IMU_H

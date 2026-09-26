@@ -60,6 +60,9 @@ extern uint8_t frame_index;
 extern uint8_t dma_rx_buf[DMA_RX_BUF_SIZE];
 extern volatile uint32_t dbg_rx_cb;   /* USART2 DMA 回调次数, 诊断用 */
 void UART2_FSM_Parse_Byte(uint8_t byte);
+/* USART2 DMA-IDLE 事件处理。由 Core/Src/usart.c 的 HAL_UARTEx_RxEventCallback
+ * 分发器按 Instance 调用（V1.14.1 起不再是 HAL 的 weak 回调本体）。 */
+void UART2_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
 #endif
 
 /* ---- OpenMV 颜色帧 (UART2, AA l_black l_mean A B DD 6字节) ---- */
