@@ -55,15 +55,4 @@ World_Dir_t World_position_get(void)
 }
 
 
-/* ============================================================
- * 惯导 (INS) 已移除
- *
- * 原来的 Ins_Init / Ins_Update / g_ins 靠 imu660ra 的原始加速度做二重积分
- * 推位置, 换成 HWT906 后没有原始加速度数据源; 它依赖的 Mahony 姿态解算
- * (siyuan_get_quat) 也已一并移除。原代码完整保留在:
- *     obsolete/imu660/Nav_position_INS_reference.c
- * 以后若接入带原始 IMU 数据的传感器, 可从那里取回。
- *
- * 现在定位只用 device/drv_wheel_odom.c 的 locator_wheel, 航向取自
- * hwt_imu.h 的 g_hwt_imu_yaw_rad。
- * ============================================================ */
+

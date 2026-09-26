@@ -1,7 +1,6 @@
 #include "../hardware/Common_used.h"
 #include "mecanum.h"
 #include "can.h"
-#include "uart2_tbop10.h"
 /**
   * @brief  麦轮单轮转速转换
   * @param  raw_speed : 原始计算速度值 (m/s 等效值)
@@ -255,141 +254,28 @@ uint8_t Mecanum_Read_AllPositions(EncoderData *enc, uint32_t timeout_ms)
 }
 
 /* ================================================================
- *  里程计自动标定
+ *  编码器脉冲 → 毫米
  *
- *  原理:
- *    低速时轮式编码器位移准确, 以 TBOP 为基准计算倍率
- *    scale = TBOP_delta_mm / encoder_delta_count
+ *  唯一的换算口 —— device/drv_wheel_odom.c 的 wheel_odom_update() 每次
+ *  推算都经此把脉冲转成 mm。
  *
- *  流程:
- *    1. 前进 ~1m (TBOP 检测), 记录编码器增量 → scale_x
- *    2. 右移 ~1m (TBOP 检测), 记录编码器增量 → scale_y
- * ================================================================ */
-
-#include "Send_motor.h"   /* Send_commandmotor 原型（V1.3.0 由手写 extern 收归） */
-
-/* TBData_t / TB_position 由 uart2_tbop10.h 提供 */
-
-OdometryCalib g_calib = {.state = CALIB_IDLE};
-
-/* 编码器增量: 当前值 − 起点 */
-static void enc_delta(EncoderData *start, float *d_forward, float *d_side)
-{
-    EncoderData now;
-    if (!Mecanum_Read_AllPositions(&now, 20)) {
-        *d_forward = 0.0f; *d_side = 0.0f;
-        return;
-    }
-
-    float d_fl = (float)(now.fl - start->fl);
-    float d_fr = (float)(now.fr - start->fr);
-    float d_rl = (float)(now.rl - start->rl);
-    float d_rr = (float)(now.rr - start->rr);
-
-    /* 前进: 四轮同向平均 */
-    *d_forward = ( d_fl + d_fr + d_rl + d_rr) / 4.0f;
-    /* 侧移: 麦轮全向侧移分量, 系数与 Mecanum_Calc_Full 的 vy 项一致
-     * 实际左右符号取决于轮子安装, 由标定/硬件实测确定 */
-    *d_side    = (-d_fl + d_fr + d_rl - d_rr) / 4.0f;
-}
-
-void Odometry_Calib_Start(void)
-{
-    if (g_calib.state != CALIB_IDLE && g_calib.state != CALIB_DONE) return;
-
-    g_calib.target_dist_mm = 1000.0f;
-    g_calib.speed           = 0.15f;     /* 低速保证里程计准确 */
-
-    /* 记录全局起点 */
-    Mecanum_Read_AllPositions(&g_calib.enc_start, 20);
-    g_calib.tbp_x0 = TB_position.xdata;
-    g_calib.tbp_y0 = TB_position.ydata;
-
-    g_calib.state = CALIB_FWD;
-    printf("CALIB: FWD start\r\n");
-}
-
-void Odometry_Calib_Update(void)
-{
-    static EncoderData seg_enc0;       /* 每段起点编码器 */
-    static float       seg_tbp_x0, seg_tbp_y0;  /* 每段起点 TBOP */
-    static uint8_t     entered = 0;
-    MecanumResult motor;
-    float d_fwd, d_side, tbp_dx, tbp_dy;
-
-    if (g_calib.state == CALIB_IDLE || g_calib.state == CALIB_DONE)
-        return;
-
-    /* ---- 初始化本段起点 ---- */
-    if (!entered) {
-        Mecanum_Read_AllPositions(&seg_enc0, 20);
-        seg_tbp_x0 = TB_position.xdata;
-        seg_tbp_y0 = TB_position.ydata;
-        entered = 1;
-    }
-
-    /* ---- 驱动电机 ---- */
-    if (g_calib.state == CALIB_FWD) {
-        motor = Mecanum_Calc(g_calib.speed, 0.0f);          /* 前进 */
-    } else {
-        motor = Mecanum_Calc_Full(0.0f, g_calib.speed, 0.0f); /* 右移 */
-    }
-    Send_commandmotor(&motor);
-
-    /* ---- 以 TBOP 为基准判断到达 1m ---- */
-    tbp_dx = TB_position.xdata - seg_tbp_x0;
-    tbp_dy = TB_position.ydata - seg_tbp_y0;
-
-    uint8_t arrived = 0;
-    if (g_calib.state == CALIB_FWD) {
-        arrived = (fabsf(tbp_dx) >= g_calib.target_dist_mm);
-    } else {
-        arrived = (fabsf(tbp_dy) >= g_calib.target_dist_mm);
-    }
-
-    if (arrived) {
-        /* 停止电机 */
-        motor = Mecanum_Calc(0.0f, 0.0f);
-        Send_commandmotor(&motor);
-
-        /* 记录编码器增量 */
-        enc_delta(&seg_enc0, &d_fwd, &d_side);
-
-        if (g_calib.state == CALIB_FWD) {
-            g_calib.scale_x = (d_fwd != 0.0f) ? tbp_dx / d_fwd : 1.0f;
-            printf("CALIB FWD: TBOP_dx=%.1f enc=%.0f scale_x=%.4f\r\n",
-                   (double)tbp_dx, (double)d_fwd, (double)g_calib.scale_x);
-            g_calib.state = CALIB_RIGHT;
-            printf("CALIB: RIGHT start\r\n");
-        } else {
-            g_calib.scale_y = (d_side != 0.0f) ? tbp_dy / d_side : 1.0f;
-            printf("CALIB RIGHT: TBOP_dy=%.1f enc=%.0f scale_y=%.4f\r\n",
-                   (double)tbp_dy, (double)d_side, (double)g_calib.scale_y);
-            g_calib.state = CALIB_DONE;
-            printf("CALIB DONE: scale_x=%.4f scale_y=%.4f\r\n",
-                   (double)g_calib.scale_x, (double)g_calib.scale_y);
-        }
-
-        entered = 0;
-    }
-}
-
-bool Odometry_Is_Calibrated(void)
-{
-    return (g_calib.state == CALIB_DONE);
-}
-
-/* 编码器增量(encoder counts) → mm (乘以标定系数) */
+ *  V1.14.0 动作：原实现在此之前还有一整块「里程计自动标定」（以 TBOP
+ *  定位器为基准反推 scale_x/scale_y 的状态机），已整块移除。理由有二：
+ *    · 三个入口函数（Calib_Start / Calib_Update / Is_Calibrated）全工程
+ *      零调用，是死代码；
+ *    · 它让业务层直接 include 硬件层的 uart2_tbop10.h 并读 TB_position
+ *      全局量，违反 CLAUDE.md §5.2.3 的跨层约束。
+ *
+ *  本函数随之剥离：原实现分「已标定用 scale_x/scale_y」与「未标定用粗略
+ *  估算」两条路径，而 g_calib.state 恒为 CALIB_IDLE（状态机从无入口），
+ *  标定那条**在此之前就不可达**。故只保留下面这条，数值与删除前逐位一致。
+ *
+ *  粗略估算: R=3.75cm(轮径≈75mm), 3200脉冲/圈
+ *  注意 MEC_WHEEL_RADIUS 单位是 cm, 所以 rough 单位是 cm/脉冲 */
 void Odometry_Apply_Calib(float enc_dx, float enc_dy, float *mm_x, float *mm_y)
 {
-    if (g_calib.state == CALIB_DONE) {
-        *mm_x = enc_dx * g_calib.scale_x;
-        *mm_y = enc_dy * g_calib.scale_y;
-    } else {
-        /* 未标定时用粗略估算: R=3.75cm(轮径≈75mm), 3200脉冲/圈
-         * 注意 MEC_WHEEL_RADIUS 单位是 cm, 所以 rough 单位是 cm/脉冲 */
-        float rough = (2.0f * 3.14159265f * MEC_WHEEL_RADIUS) / 3200.0f;
-        *mm_x = enc_dx * rough;
-        *mm_y = enc_dy * rough;
-    }
+    float rough = (2.0f * 3.14159265f * MEC_WHEEL_RADIUS) / 3200.0f;
+
+    *mm_x = enc_dx * rough;
+    *mm_y = enc_dy * rough;
 }

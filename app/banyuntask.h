@@ -32,6 +32,9 @@ typedef enum {
      Event_PickUp               = 8,   /* 拾取(转盘颜色收集) */
      Event_PlaceDown            = 9,   /* 放置 */
      Event_GoHome               = 10,   /* 回家 */
+
+     /* ---- V1.13.0 追加（只能往后加，保证既有值不变）---- */
+     Event_ArcRun               = 11,   /* 按 Arc_SetParam 的参数跑一段圆弧 */
 } SystemMode_t;
 
 /* ============================================================

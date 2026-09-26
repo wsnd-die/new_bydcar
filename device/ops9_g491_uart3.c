@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "usart.h"   /* CubeMX 生成的 huart3 句柄，供 locator_ops9.init() 挂接 */
-static UART_HandleTypeDef s_owned_huart3;
 static UART_HandleTypeDef *s_huart = NULL;
 
 static ops9_t s_ops9;

@@ -39,7 +39,7 @@
 ```
 app/              应用层：任务调度（banyuntask、worker_task）、比赛策略（ColorIdentif）
                   ＋ 尚待下沉的业务模块（NavigationMecanum、BollLocator、Mecanum_Move）
-algorithm/        业务层：mecanum、pid、angle_ctrl、Circle_base、Nav_position
+algorithm/        业务层：mecanum、pid、angle_ctrl、Circle_base、Nav_position、arc_path
 device/           抽象设备层：PoseData_t + LocatorDev_t 接口 ＋ locator_wheel 实现（OPS9/光流尚未接入）
 hardware/         硬件驱动层，按器件类型细分：
   ├─ sensors/       hwt_imu、grayscale、color、collect_ir、k230、QRcode
@@ -65,6 +65,13 @@ obsolete/         已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/�
 > 被 `--gc-sections` 整段回收、根本没进 `.elf`。**但流程入口与驱动源仍空**：
 > `task_send()` 零调用，`NLF_RunFlow()` 只写死了 Mode → 执行体的映射。
 >
+> V1.12.0 **补上了任务创建**：`FC_TASK`（AboveNormal，10ms，兼 HWT906 的唯一轮询者）
+> 与 `NLF_TASK`（Normal，阻塞式流程）已由 `MX_FREERTOS_Init()` 创建，
+> defaultTask 也改回 `task_recive() → NLF_Request()` 调度器循环，两个任务不再被
+> 回收。**但驱动源仍然空**：`task_send()` 依旧零调用，所以 `NLF_TASK` 永久阻塞在
+> `osThreadFlagsWait`、`NLF_RunFlow()` 一次也没执行过 —— 这条链目前只通到调度器，
+> 还跑不通一条完整流程。
+>
 > V1.6.0 **移除了整个循迹功能**（`GrayTrace` / `Trace_base` / `trace_tune` 共 6 个文件），
 > 只保留 K230 找圆与导航。V1.5.0 遗留的 ② `trace_tune` 双向耦合、③ `QRcode.c` 中断
 > 回调硬编码分流，随之消失。
@@ -86,7 +93,7 @@ obsolete/         已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/�
 | `drv_optical_flow.c` | 不存在 | 无光流硬件接入 |
 | `modules/pose_fusion.c` | 不存在 | 无独立融合模块 |
 | `config/param_config.h` | 不存在 | 现有可调参数散落在各模块头文件中 |
-| 姿态来源 | `hardware/hwt_imu.c` | 维特 HWT906，I2C3，航向取 `g_hwt_imu_yaw_rad` |
+| 姿态来源 | `hardware/hwt_imu.c` | 维特 HWT906（**九轴**），I2C3，航向取 `g_hwt_imu_yaw_rad`；V1.11.0 起一次事务读回 0x34~0x40 整块，加速度/角速度/磁场/温度也一并带回 |
 
 **现有可用定位源实际上只有轮式里程计一种**，航向由 HWT906 提供（见 `Nav_position.c`）。
 
@@ -135,8 +142,16 @@ typedef struct {
 
     uint8_t  valid;     // 数据有效性标志：0-无效，1-有效
     uint32_t timestamp; // 数据时间戳，单位：ms
+
+    // ---- V1.11.0 追加（前向兼容，只能往后加）----
+    float ax;         // X轴线加速度，单位：m/s^2，传感器本体坐标系
+    float ay;         // Y轴线加速度，单位：m/s^2
+    float az;         // Z轴线加速度，单位：m/s^2
 } PoseData_t;
 ```
+
+> `ax/ay/az` 目前只有 `imu_hwt906` 会填；`locator_wheel` / `locator_ops9`
+> 无加速度数据源，恒为 0（同 `vx/vy` 先例）。
 
 使用规则：
 
@@ -314,6 +329,12 @@ active_locator->get_pose(&robot_pose);
 
 | 版本 | 日期 | 摘要 | 记录 |
 |---|---|---|---|
+| V1.14.0 | 2026-09-26 | 删除：TBOP 里程计自动标定整块（死代码 + 跨层违规）；`Odometry_Apply_Calib` 剥离为单分支 | [2026-09-26](clauderecord/2026-09-26.md) |
+| V1.14.1 | 2026-09-26 | 修改：USART3(OPS9) 接收改 DMA+IDLE；`HAL_UARTEx_RxEventCallback` 收归 `usart.c` 做唯一分发器 | [2026-09-26](clauderecord/2026-09-26.md) |
+| V1.14.2 | 2026-09-26 | 修复：I2C3 改 DMA 读后未接通 I2C3_EV/ER 中断（传输永不完成）；补 NVIC + IRQHandler + 信号量完成同步 | [2026-09-26](clauderecord/2026-09-26.md) |
+| V1.11.0 | 2026-09-25 | 新增：HWT906 读全 0x34~0x40 九轴（块读 + 退化回退）；`wz` 改取陀螺仪；`PoseData_t` 追加 `ax/ay/az` | [2026-09-25](clauderecord/2026-09-25.md) |
+| V1.12.0 | 2026-09-25 | 新增：接通任务流程 —— 创建 FC_TASK / NLF_TASK，defaultTask 改走调度器循环；撤 V1.11.0 临时脚手架；堆 8096→16384 | [2026-09-25](clauderecord/2026-09-25.md) |
+| V1.13.0 | 2026-09-25 | 新增：定半径圆弧 + 切线航向 —— `algorithm/arc_path`；契约追加线速度与前馈角速度；`Event_ArcRun` | [2026-09-25](clauderecord/2026-09-25.md) |
 | V1.10.7 | 2026-09-23 | 修复：SCS0009 总线字节序错误（`setEnd` 全局量按系列切换）；修正中位常量 | [2026-09-23](clauderecord/2026-09-23.md) |
 | V1.10.6 | 2026-09-22 | 优化：精简 `gripper_task` 调试脚手架；建立 STS3032+SCS0009 双系列 6 舵机骨架 | [2026-09-22](clauderecord/2026-09-22.md) |
 | V1.10.5 | 2026-09-22 | 新增：广播动作验证发送通路（调试用，会让舵机动作） | [2026-09-22](clauderecord/2026-09-22.md) |

@@ -10,6 +10,10 @@
  *
  * @warning 禁止修改已有字段的顺序与类型；
  *          新增字段只能追加到结构体末尾，以保证前向兼容。
+ *
+ * @note    V1.11.0 在末尾追加了 ax / ay / az（IMU 三轴线加速度）。
+ *          这三个字段目前只有 imu_hwt906（device/HWT906.c）会填；
+ *          locator_wheel / locator_ops9 没有加速度数据源，恒为 0。
  */
 
 #ifndef _POSE_DATA_H_
@@ -40,6 +44,11 @@ typedef struct {
 
     uint8_t  valid;     /* 数据有效性标志：0-无效，1-有效 */
     uint32_t timestamp; /* 数据时间戳，单位：ms */
+
+    /* ---- 以下为 V1.11.0 追加，前向兼容 ---- */
+    float ax;         /* X轴线加速度，单位：m/s^2，传感器本体坐标系 */
+    float ay;         /* Y轴线加速度，单位：m/s^2 */
+    float az;         /* Z轴线加速度，单位：m/s^2 */
 } PoseData_t;
 
 #endif /* _POSE_DATA_H_ */
