@@ -16,7 +16,7 @@ extern uint8_t rx4;
 #define NX_MODE_STOP      'x'   /* 停止（匹配 K230 Python） */
 
 /* ==================== 模式管理 ==================== */
-void NX_Init(void);
+void K230_Init(void);
 void NX_RequestMode(uint8_t mode);
 void NX_ApplyMode(void);
 void NX_SetMode(uint8_t mode);

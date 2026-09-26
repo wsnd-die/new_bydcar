@@ -11,7 +11,7 @@
 
 #include "Common_used.h"
 #include "k230.h"
-uint8_t rx4;
+uint8_t rx3;
 /* ---- 接收状态机 ---- */
 typedef enum {
     K230_RX_WAIT_A3 = 0,
@@ -49,16 +49,16 @@ static struct {
 
 /* ================================================================ */
 
-void NX_Init(void)
+void K230_Init(void)
 {
     memset(&k230_ctx, 0, sizeof(k230_ctx));
     k230_ctx.rx_state = K230_RX_WAIT_A3;
-    HAL_UART_Receive_IT(&huart3, &rx4, 1);
+    HAL_UART_Receive_IT(&huart3, &rx3, 1);
 }
 
-void NX_RxProcessByte(void)
+void k230_RxProcessByte(void)
 {
-    uint8_t b = rx4;
+    uint8_t b = rx3;
     k230_ctx.rx_bytes++;
 
     switch (k230_ctx.rx_state) {
@@ -133,21 +133,21 @@ void NX_RxProcessByte(void)
         break;
     }
 
-    HAL_UART_Receive_IT(&huart3, &rx4, 1);
+    HAL_UART_Receive_IT(&huart3, &rx3, 1);
 }
 
-void NX_RxRestart(void)
+void k230_RxRestart(void)
 {
     __HAL_UART_CLEAR_FLAG(&huart3,
         UART_CLEAR_OREF | UART_CLEAR_FEF | UART_CLEAR_NEF);
     k230_ctx.rx_state = K230_RX_WAIT_A3;
     k230_ctx.rx_idx = 0;
-    HAL_UART_Receive_IT(&huart3, &rx4, 1);
+    HAL_UART_Receive_IT(&huart3, &rx3, 1);
 }
 
 /* ---- 发送 ---- */
 
-static void NX_send_cmd(uint8_t cmd)
+static void k230_send_cmd(uint8_t cmd)
 {
     while (!(USART3->ISR & USART_ISR_TXE)) {}
     USART3->TDR = cmd;
@@ -156,29 +156,29 @@ static void NX_send_cmd(uint8_t cmd)
 
 /* ---- 模式管理 ---- */
 
-void NX_RequestMode(uint8_t mode)
+void k230_RequestMode(uint8_t mode)
 {
     k230_ctx.requested_mode = mode;
 }
 
-void NX_ApplyMode(void)
+void k230_ApplyMode(void)
 {
     if (k230_ctx.requested_mode == 0) return;
     if (k230_ctx.requested_mode == k230_ctx.current_mode) return;
 
-    NX_send_cmd(k230_ctx.requested_mode);
+    k230_send_cmd(k230_ctx.requested_mode);
     k230_ctx.current_mode = k230_ctx.requested_mode;
 }
 
-void NX_SetMode(uint8_t mode)
+void k230_SetMode(uint8_t mode)
 {
-    NX_send_cmd(mode);
+    k230_send_cmd(mode);
     k230_ctx.current_mode = mode;
 }
 
 /* ---- 数据读取 ---- */
 
-bool NX_GetLineAngle(float *angle)
+bool k230_GetLineAngle(float *angle)
 {
     if (!k230_ctx.angle_fresh) return false;
     if (angle) *angle = k230_ctx.angle;
@@ -186,7 +186,7 @@ bool NX_GetLineAngle(float *angle)
     return true;
 }
 
-bool NX_GetCircleDir(char *dir)
+bool k230_GetCircleDir(char *dir)
 {
     if (!k230_ctx.dir_fresh) return false;
     if (dir) *dir = k230_ctx.dir;
@@ -194,7 +194,7 @@ bool NX_GetCircleDir(char *dir)
     return true;
 }
 
-bool NX_GetPosition(float *x, float *y)
+bool k230_GetPosition(float *x, float *y)
 {
     if (!k230_ctx.pos_fresh) return false;
     if (x) *x = k230_ctx.pos_x;
@@ -202,7 +202,7 @@ bool NX_GetPosition(float *x, float *y)
     k230_ctx.pos_fresh = 0;
     return true;
 }
-bool NX_GetCirclepos(float *cx,float *cy)
+bool k230_GetCirclepos(float *cx,float *cy)
 {
 
     if (cx) *cx = k230_ctx.circle_x;
@@ -210,7 +210,7 @@ bool NX_GetCirclepos(float *cx,float *cy)
     return true;
 }
 
-void NX_GetDiag(uint32_t *rx_bytes, uint32_t *rx_ok,
+void k230_GetDiag(uint32_t *rx_bytes, uint32_t *rx_ok,
                   uint32_t *rx_err, uint32_t *rx_unk)
 {
     if (rx_bytes) *rx_bytes = k230_ctx.rx_bytes;
