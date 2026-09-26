@@ -14,6 +14,8 @@
 #include "banyuntask.h"
 #include "worker_task.h"
 
+#include "../uart/NX_uart4.h"
+
 /* ==================================================================
  * 一、FC_TASK 与 NavigationMecanum 之间的契约量
  *
@@ -66,16 +68,13 @@ static volatile SystemMode_t s_nlf_pending = Event_STOP;
  * @note  发送零速而不是"什么都不发": 闭环步进电机在速度模式下会一直执行
  *        最后一次收到的目标速度。Mecanum_Calc(0,0) 四轮速度均为 0。
  */
-static void FC_Stop(void)
+static void AG_Stop(void)
 {
     MecanumResult zero = Mecanum_Calc(0.0f, 0.0f);
     Send_commandmotor(&zero);
 }
-
-void FC_Task(void *argument)
+void Angle_Fuction(void)
 {
-    (void)argument;
-
     uint8_t  was_on    = 0;      /* 上一拍的 g_angle_ctrl_enable, 用于取边沿 */
 
     imu_hwt906.init();
@@ -85,23 +84,9 @@ void FC_Task(void *argument)
     {
         PoseData_t pose;
 
-        /* HWT906 没有中断/DRDY 输出, 只能轮询刷新 (见 hardware/hwt_imu.h)。
-         * 本任务是全工程周期最短的, 由它统一刷新: 实例 update 内部
-         * HWT_IMU_Poll 更新的全局量, 里程计与导航仍共用同一份数据。
-         * (V1.8.0 备注 2 的二选一, 本次选实例: FC_TASK 不再直接调 Poll。) */
         imu_hwt906.update();
         imu_hwt906.get_pose(&pose);
 
-        /* 实例给 rad / rad/s, 角度环按 deg 工作, 换算后与 g_angle_target_yaw 同量纲。
-         *
-         * V1.11.0 起 wz 的取法变了: 此前是「yaw 差分 + wrap±π + 实测 dt」,
-         * 现在直接取陀螺仪 GZ (device/HWT906.c 的 g_hwt_imu_gyro_z_rad)。
-         * 因此**本处不再受 Send_commandmotor() 内含 osDelay(5)、实际周期大于
-         * 10ms 的影响** —— 陀螺仪给的是真实角速度, 不受 yaw 更新率与量化限制。
-         *
-         * @warning angle_ctrl.c 的两级 PID 增益是按**差分信号**的噪声特性整定的
-         *          (见 app/worker_task.h:42-47 与 angle_ctrl.c 的 DT 宏)。换源后
-         *          必须重新确认增益, 否则可能振荡。 */
         float yaw   = RAD2DEG(pose.yaw);
         float w_deg = RAD2DEG(pose.wz);
 
@@ -135,12 +120,18 @@ void FC_Task(void *argument)
         else if (was_on)
         {
             /* 下降沿: 刹停, 让调用方的 osDelay(20) 有意义 */
-            FC_Stop();
+            AG_Stop();
             s_fc.state = ANGLE_IDLE;
             was_on = 0;
         }
-        osDelay(FC_TASK_PERIOD_MS);
+        osDelay(AG_TASK_PERIOD_MS);
     }
+}
+void FC_Fuction(void)
+{
+    NX_RequestMode(NX_MODE_CIRCLE);
+    NX_ApplyMode();
+    osDelay(FC_TASK_PERIOD_MS);
 }
 
 /* ==================================================================
@@ -155,9 +146,8 @@ void NLF_Request(SystemMode_t mode)
     }
 }
 
-void NLF_Task(void *argument)
+void NLF_Fuction(void)
 {
-    (void)argument;
 
     for (;;)
     {

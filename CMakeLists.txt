@@ -64,7 +64,9 @@ set(FREERTOS_SOURCES
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
     ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
         uart/msp_uart2.c
-        uart/msp_uart2.h)
+        uart/msp_uart2.h
+        uart/NX_uart4.c
+        uart/NX_uart4.h)
 
 # Application code: CubeMX-generated Core, plus the hand-written layer folders.
 #

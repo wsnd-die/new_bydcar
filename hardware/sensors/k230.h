@@ -20,7 +20,7 @@ extern "C" {
 #include <stdbool.h>
 
 /* ---- 跨文件共享的 USART3 接收缓冲（在 k230.c 中定义） ---- */
-extern uint8_t rx3;
+extern uint8_t rx4;
 
 /* ---- K230 模式常量 ---- */
 #define K230_MODE_LINEL      'l'   /* 循迹模式 */
@@ -29,22 +29,22 @@ extern uint8_t rx3;
 #define K230_MODE_STOP      'x'   /* 停止（匹配 K230 Python） */
 
 /* ==================== 模式管理 ==================== */
-void K230_Init(void);
-void K230_RequestMode(uint8_t mode);
-void K230_ApplyMode(void);
-void K230_SetMode(uint8_t mode);
+void NX_Init(void);
+void NX_RequestMode(uint8_t mode);
+void NX_ApplyMode(void);
+void NX_SetMode(uint8_t mode);
 
 /* ==================== 数据读取 ==================== */
-bool K230_GetLineAngle(float *angle);
-bool K230_GetCircleDir(char *dir);
+bool NX_GetLineAngle(float *angle);
+bool NX_GetCircleDir(char *dir);
 bool K230_GetPosition(float *x, float *y);
 bool K230_GetCirclepos(float *cx,float *cy);
 void K230_GetDiag(uint32_t *rx_bytes, uint32_t *rx_ok,
                   uint32_t *rx_err, uint32_t *rx_unk);
 
 /* ==================== ISR 接口 ==================== */
-void K230_RxProcessByte(void);   /* HAL_UART_RxCpltCallback 中调用 */
-void K230_RxRestart(void);       /* HAL_UART_ErrorCallback 中调用 */
+void NX_RxProcessByte(void);   /* HAL_UART_RxCpltCallback 中调用 */
+void NX_RxRestart(void);       /* HAL_UART_ErrorCallback 中调用 */
 
 #ifdef __cplusplus
 }

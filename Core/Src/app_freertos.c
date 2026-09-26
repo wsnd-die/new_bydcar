@@ -31,6 +31,7 @@
 #include "emm_5v.h"
 #include "ops9_g491_uart3.h"
 #include "servo_scs.h"
+#include "worker_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -225,9 +226,6 @@ void MX_FREERTOS_Init(void) {
   nav_taskHandle = osThreadNew(NLF_TASK, NULL, &nav_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-
-  fcTaskHandle  = osThreadNew(FC_Task,  NULL, &fcTask_attributes);
-  nlfTaskHandle = osThreadNew(NLF_Task, NULL, &nlfTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -292,7 +290,6 @@ void ops9imu_fuction(void *argument)
   active_locator->init();
   for(;;)
   {
-
     active_locator->update();
     active_locator->get_pose(&o_pose);
     // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
@@ -362,6 +359,7 @@ void FC_TASK(void *argument)
   /* Infinite loop */
   for(;;)
   {
+    FC_Fuction();
     osDelay(1);
   }
   /* USER CODE END FC_TASK */
@@ -380,6 +378,7 @@ void NLF_TASK(void *argument)
   /* Infinite loop */
   for(;;)
   {
+    NLF_Fuction();
     osDelay(1);
   }
   /* USER CODE END NLF_TASK */

@@ -40,12 +40,12 @@ void Circle_Follow(void)
     float cx = 0.0f, cy = 0.0f;
 
     /* ---- 1. 获取圆方向 (无新帧时保持上次, 不重置计数) ---- */
-    if (K230_GetCircleDir(&dir)) {
+    if (NX_GetCircleDir(&dir)) {
         s_last_dir = dir;
     }
 
     /* ---- 1.4 读圆心偏差 → 分档调速 (远>20px快, 近≤20px慢) ---- */
-    K230_GetCirclepos(&cx, &cy);
+    NX_GetCirclepos(&cx, &cy);
     {
         float dist = sqrtf(cx*cx + cy*cy);
         g_circle_speed = (dist > CIRCLE_XY_FAST_TH) ? CIRCLE_XY_V_FAST : CIRCLE_XY_V_SLOW;

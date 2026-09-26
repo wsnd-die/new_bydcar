@@ -44,8 +44,8 @@ extern "C" {
  *          osDelay(5), 所以角速度环看到的实际 dt 会略大于本值 ——
  *          任务里用实测 dt 做差分补偿, 不依赖本常量算角速度。
  */
-#define FC_TASK_PERIOD_MS       10u
-
+#define AG_TASK_PERIOD_MS       10u
+#define FC_TASK_PERIOD_MS       100u
 /* 栈深, 单位: 字 (1 字 = 4 字节)。
  *
  * FC_TASK 很浅: 只有几个局部标量, AngleCtrl 实例是 static 的, 不在栈上。
@@ -100,10 +100,10 @@ extern volatile float   g_angle_ctrl_w_ff;   /* 前馈角速度 rad/s, 逆时针
  * ================================================================ */
 
 /** @brief FC_TASK 入口 (osThreadFunc_t 签名)。 */
-void FC_Task (void *argument);
+void FC_Fuction(void);
 
 /** @brief NLF_TASK 入口 (osThreadFunc_t 签名)。 */
-void NLF_Task(void *argument);
+void NLF_Fuction(void);
 
 /**
  * @brief  请求 NLF_TASK 执行一个 Mode。由 defaultTask 调度器调用。
