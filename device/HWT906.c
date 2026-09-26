@@ -6,37 +6,34 @@
  * HWT_IMU_Poll，位姿缓存统一为 PoseData_t（CLAUDE.md 第 3 节）。
  *
  * 定位源契约（CLAUDE.md 2.1 节）：本设备只承诺【姿态】——yaw / pitch /
- * roll / wz。x / y / vx / vy 无数据源恒为 0，不能充当 active_locator。
+ * roll / wz / 三轴线加速度。x / y / vx / vy 无数据源恒为 0，
+ * 不能充当 active_locator。
  *
- * 数据流：HWT906 模块内部完成姿态融合，I2C3 只读回 roll/pitch/yaw
- * （见 hardware/sensors/hwt_imu.h 的说明），无原始角速度 —— wz 由
- * yaw 差分得到（与 app/worker_task.c FC_TASK 角度环同法）。
+ * 数据流：HWT906 内部完成姿态融合，I2C3 一次事务读回 0x34~0x40 整块
+ * （加速度 + 角速度 + 磁场 + 姿态角 + 温度，见 hwt_imu.h）。本实例只取其中三样：
+ *   - 姿态角     → yaw / pitch / roll；
+ *   - 陀螺仪 GZ  → wz（V1.11.0 起直接取用，此前是 yaw 差分推算）；
+ *   - 三轴线加速度 → ax / ay / az。
+ * 磁场与温度本实例不取，留在驱动层全局量里（g_hwt_imu_mag_* / g_hwt_imu_temp），
+ * 需要就直接读 hwt_imu.h —— 不必为了这两个量再扩 PoseData_t。
  */
 
 #include "HWT906.h"
 #include "hwt_imu.h"
 
 /* ============================================================
- * 内部状态
+ * 内部常量与状态
  * ============================================================ */
 
 #define HWT906_DEG2RAD 0.01745329252f   /* pi / 180 */
-#define HWT906_PI      3.14159265359f
 
-static PoseData_t s_pose;              /* 最新姿态缓存（rad） */
+/* 陀螺仪 Z 轴符号。+1 = "GZ 为正" 与 "yaw 增大" 同向
+ * （CCW 为正，与 PoseData_t 的坐标系约定一致）。
+ * 【台架判据】手转车身使 yaw 增大，若 gz 读数为负则改成 -1 ——
+ * 符号搞反等于角度环正反馈，会直接发散，接线后必须第一个确认这条。 */
+#define HWT906_GZ_SIGN  (+1.0f)
 
-/* wz 差分状态：HWT906 无原始角速度，由 yaw 差分得到 */
-static float    s_prev_yaw_rad = 0.0f;
-static uint32_t s_prev_tick    = 0U;
-static uint8_t  s_have_prev    = 0U;
-
-/* 角差折算到 -π..π（差分前先归一，避免 yaw 在 ±π 跳变时产生 2π 尖峰） */
-static float hwt906_wrap_pi(float rad)
-{
-    while (rad >  HWT906_PI) { rad -= 2.0f * HWT906_PI; }
-    while (rad < -HWT906_PI) { rad += 2.0f * HWT906_PI; }
-    return rad;
-}
+static PoseData_t s_pose;              /* 最新姿态缓存（rad / m/s^2） */
 
 /* ============================================================
  * LocatorDev_t 四函数
@@ -66,24 +63,23 @@ static void hwt906_loc_init(void)
     s_pose.vy = 0.0f;
     s_pose.wz = 0.0f;
 
+    s_pose.ax = 0.0f;
+    s_pose.ay = 0.0f;
+    s_pose.az = 0.0f;
+
     s_pose.valid     = 0U;
     s_pose.timestamp = 0U;
-
-    s_prev_yaw_rad = 0.0f;
-    s_prev_tick    = 0U;
-    s_have_prev    = 0U;
 }
 
 /**
- * @brief 周期更新：读一帧 roll/pitch/yaw，刷新姿态缓存
- * @note  这是【有副作用】的接口（内部 HWT_IMU_Poll 阻塞读 I2C3，约
- *        100µs），必须固定周期调用且全局只调一处。
+ * @brief 周期更新：读一帧 0x34~0x40 整块，刷新姿态缓存
+ * @note  这是【有副作用】的接口（内部 HWT_IMU_Poll 阻塞读 I2C3，读 26 字节，
+ *        阻塞时间随总线速率而定），必须固定周期调用且全局只调一处。
  *        读失败时位姿冻结并置 valid=0，绝不外推。
  */
 static void hwt906_loc_update(void)
 {
     uint32_t now;
-    float    dt;
 
     if (!HWT_IMU_Poll()) {
         s_pose.valid = 0U;              /* I2C 无应答：冻结并标记不可信 */
@@ -96,18 +92,28 @@ static void hwt906_loc_update(void)
     s_pose.pitch = g_hwt_imu_pitch * HWT906_DEG2RAD;
     s_pose.roll  = g_hwt_imu_roll  * HWT906_DEG2RAD;
 
-    /* 角速度：由 yaw 差分得到（与 FC_TASK 角度环同法） */
-    if (s_have_prev != 0U) {
-        dt = (float)(now - s_prev_tick) / 1000.0f;
-        s_pose.wz = (dt > 0.001f)
-                    ? hwt906_wrap_pi(s_pose.yaw - s_prev_yaw_rad) / dt
-                    : 0.0f;
-    } else {
-        s_pose.wz = 0.0f;
+    if (g_hwt_imu_ext_ok != 0U)
+    {
+        /* 角速度：V1.11.0 起直接取陀螺仪 GZ（此前由 yaw 差分得到）。
+         * 陀螺仪给的是真实角速度，不受 yaw 的更新率与量化限制。
+         * 【注意】angle_ctrl.c 的两级 PID 此前按差分信号的噪声特性整定，
+         * 换源后需重新确认增益，详见 clauderecord/2026-09-25.md。 */
+        s_pose.wz = g_hwt_imu_gyro_z_rad * HWT906_GZ_SIGN;
+
+        s_pose.ax = g_hwt_imu_acc_x;
+        s_pose.ay = g_hwt_imu_acc_y;
+        s_pose.az = g_hwt_imu_acc_z;
     }
-    s_prev_yaw_rad = s_pose.yaw;
-    s_prev_tick    = now;
-    s_have_prev    = 1U;
+    else
+    {
+        /* 长块读退化了：只有姿态角是新的，陀螺仪/加速度那几个全局量还是
+         * 上一拍的值。宁可给 0 也不把陈旧值当新数据发出去 —— 陈旧角速度
+         * 喂进速度环比 0 更危险。退化与否由 g_hwt_imu_ext_ok 反映。 */
+        s_pose.wz = 0.0f;
+        s_pose.ax = 0.0f;
+        s_pose.ay = 0.0f;
+        s_pose.az = 0.0f;
+    }
 
     s_pose.valid     = 1U;
     s_pose.timestamp = now;

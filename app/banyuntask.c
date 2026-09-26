@@ -2,7 +2,6 @@
 #include "banyuntask.h"
 QueueHandle_t systemEventQueue = NULL;
 
-
 void task_init()
 {
     systemEventQueue =
@@ -41,5 +40,3 @@ TaskCommand_t task_recive()
     receivedCmd.k = 0;
     return receivedCmd;
 }
-
-

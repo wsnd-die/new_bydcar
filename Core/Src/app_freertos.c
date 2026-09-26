@@ -91,13 +91,31 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-/* Worker 任务属性。句柄 (fcTaskHandle / nlfTaskHandle) 定义在 app/worker_task.c,
- * 因为调度器要通过它们给任务发线程标志。 */
+/* Worker 任务属性。句柄 (fcTaskHandle / nlfTaskHandle) **不在本文件定义** ——
+ * 它们定义在 app/worker_task.c:38-39, 因为调度器要通过句柄给任务发线程标志。
+ * 本文件只负责创建并把句柄赋值回去。
+ *
+ * @note 这两组属性必须放在 USER CODE 区。上面生成区那三组 (defaultTask /
+ *       ops9imu_task / gripper) 由 CubeMX 按 .ioc 的 FREERTOS.Tasks01 生成,
+ *       手工加的内容会在重新生成时被静默删掉。
+ *
+ * 优先级: ops9imu_task = osPriorityHigh(40) 保持最高; FC_TASK 取 AboveNormal(32),
+ *         高于 NLF_TASK 的 Normal(24) —— FC_TASK 是 10ms 角度环, 必须能抢占
+ *         阻塞式流程任务, 否则控制周期会被拉长。
+ *
+ * 栈深: 直接复用 app/worker_task.h:58-59 的宏, 不写字面量 (规范第 7.3 节)。
+ *       CMSIS-RTOS2 的 stack_size 单位是**字节**, 故乘 4。 */
+const osThreadAttr_t fcTask_attributes = {
+  .name       = "FC_TASK",
+  .priority   = (osPriority_t) osPriorityAboveNormal,
+  .stack_size = FC_TASK_STACK_WORDS * 4
+};
 
-/* FC_TASK: 10ms 角度环, 必须能抢占阻塞式流程任务, 否则控制周期会被拉长 */
-
-
-/* NLF_TASK: 流程任务, 大部分时间阻塞在导航/循迹里 */
+const osThreadAttr_t nlfTask_attributes = {
+  .name       = "NLF_TASK",
+  .priority   = (osPriority_t) osPriorityNormal,
+  .stack_size = NLF_TASK_STACK_WORDS * 4
+};
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -186,7 +204,17 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* Worker 任务。架构: 驱动源 → defaultTask 调度器 → Worker 任务,
-   * 见 app/banyuntask.h 与 app/worker_task.h。 */
+   * 见 app/banyuntask.h 与 app/worker_task.h。
+   *
+   * @note FC_TASK 是本工程 HWT906 的唯一轮询者 (worker_task.c:89) —— 在它被
+   *       创建之前, imu_hwt906.update() 没有任何周期性调用者, IMU 驱动被
+   *       --gc-sections 整段回收、根本不在 .elf 里。
+   *
+   * @warning 堆必须够。configTOTAL_HEAP_SIZE 见 Core/Inc/FreeRTOSConfig.h:72
+   *          (V1.12.0 由 8096 提到 16384)。若不够, osThreadNew 返回 NULL,
+   *          而 configASSERT 是关中断死循环 —— 表现为上电即卡死且无任何提示。 */
+  fcTaskHandle  = osThreadNew(FC_Task,  NULL, &fcTask_attributes);
+  nlfTaskHandle = osThreadNew(NLF_Task, NULL, &nlfTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -208,22 +236,26 @@ void StartDefaultTask(void *argument)
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
 
 
-  Emm_V5_En_Control(1, 1, 0);
-  Emm_V5_En_Control(2, 1, 0);
-  Emm_V5_En_Control(3, 1, 0);
-  Emm_V5_En_Control(4, 1, 0);
 
+  /* ── 调度器 ──────────────────────────────────────────────────────────
+   * 架构: 驱动源 → defaultTask 调度器 → Worker 任务。
+   * 本任务只负责从系统事件队列取 Mode 并转交 NLF_TASK, 不再碰 IMU ——
+   * HWT906 的轮询已交还 FC_TASK (见 app/worker_task.c 的 FC_Task)。
+   *
+   * task_recive() 内部是 portMAX_DELAY 阻塞, 队列空时本任务挂起、不占 CPU;
+   * 下面的 osDelay(20) 只在真的收到一条命令之后才会执行。 */
   for(;;)
   {
-    // TaskCommand_t cmd = task_recive();
-    // if (cmd.k) {
-    //   NLF_Request(cmd.Mode);
-    // }
+    TaskCommand_t cmd = task_recive();
+    if (cmd.k) {
+      NLF_Request(cmd.Mode);
+    }
 
     // Emm_V5_Vel_Control(1, 0, 0, 0, 0);
     // Emm_V5_Vel_Control(2, 0, 0, 0, 0);
     // Emm_V5_Vel_Control(3, 1, 0, 0, 0);
     // Emm_V5_Vel_Control(4, 1, 0, 0, 0);
+
     osDelay(20);
   }
   /* USER CODE END StartDefaultTask */
@@ -242,6 +274,8 @@ void ops9imu_fuction(void *argument)
   /* Infinite loop */
   const LocatorDev_t *active_locator = &locator_ops9;
   PoseData_t o_pose;
+
+  /* Infinite loop */
   active_locator->init();
   for(;;)
   {

@@ -10,13 +10,14 @@
 #include "Send_motor.h"
 #include "Circle_base.h"
 #include "NavigationMecanum.h"
+#include "arc_path.h"
 #include "banyuntask.h"
 #include "worker_task.h"
 
 /* ==================================================================
  * 一、FC_TASK 与 NavigationMecanum 之间的契约量
  *
- * 这两个量的 extern 声明在 hardware/Common_used.h:139-140,
+ * 这两个量的 extern 声明在 app/worker_task.h:77-78,
  * 本文件是它们**唯一的定义处**。
  *
  * 背景: V1.3.0 之前它们被 app/NavigationMecanum.c 引用却全工程无定义。
@@ -34,6 +35,10 @@
  * ================================================================== */
 volatile uint8_t g_angle_ctrl_enable = 0;    /* 1 = 打开角度环 */
 volatile float   g_angle_target_yaw  = 0.0f; /* 目标航向 (deg), 与 g_hwt_imu_yaw 同量纲 */
+
+/* V1.13.0 追加。默认 0 → FC_TASK 行为与前版一致 (纯原地转向)。 */
+volatile float   g_angle_ctrl_speed  = 0.0f; /* 目标线速度 m/s, >0 前进 */
+volatile float   g_angle_ctrl_w_ff   = 0.0f; /* 前馈角速度 rad/s, CCW 为正 */
 
 osThreadId_t fcTaskHandle  = NULL;
 osThreadId_t nlfTaskHandle = NULL;
@@ -73,8 +78,6 @@ void FC_Task(void *argument)
 
     uint8_t  was_on    = 0;      /* 上一拍的 g_angle_ctrl_enable, 用于取边沿 */
 
-    /* 探测在线并把当前航向设为零点 (实例 init 内部转调 HWT_IMU_Init)。
-     * 掉线情况由 imu_hwt906.is_healthy() 反映。 */
     imu_hwt906.init();
     Angle_Init(&s_fc);
 
@@ -89,28 +92,44 @@ void FC_Task(void *argument)
         imu_hwt906.update();
         imu_hwt906.get_pose(&pose);
 
-        /* 实例给 rad / rad/s, 角度环按 deg 工作, 换算后与
-         * g_angle_target_yaw 同量纲。wz 由实例内部差分得到, 方法与此前
-         * FC_TASK 手写版一致 (wrap±π + 实测 dt, 因为 Send_commandmotor()
-         * 内含 osDelay(5), 实际周期大于 10ms)。 */
+        /* 实例给 rad / rad/s, 角度环按 deg 工作, 换算后与 g_angle_target_yaw 同量纲。
+         *
+         * V1.11.0 起 wz 的取法变了: 此前是「yaw 差分 + wrap±π + 实测 dt」,
+         * 现在直接取陀螺仪 GZ (device/HWT906.c 的 g_hwt_imu_gyro_z_rad)。
+         * 因此**本处不再受 Send_commandmotor() 内含 osDelay(5)、实际周期大于
+         * 10ms 的影响** —— 陀螺仪给的是真实角速度, 不受 yaw 更新率与量化限制。
+         *
+         * @warning angle_ctrl.c 的两级 PID 增益是按**差分信号**的噪声特性整定的
+         *          (见 app/worker_task.h:42-47 与 angle_ctrl.c 的 DT 宏)。换源后
+         *          必须重新确认增益, 否则可能振荡。 */
         float yaw   = RAD2DEG(pose.yaw);
         float w_deg = RAD2DEG(pose.wz);
 
         if (g_angle_ctrl_enable)
         {
             if (!was_on) {
-                /* 上升沿: 复位 PID, 清掉上一次残留的积分 */
                 Angle_SetTarget(&s_fc, g_angle_target_yaw);
                 was_on = 1;
             } else {
-                /* 连续追踪: 只更新目标, 不复位 PID */
                 Angle_UpdateTarget(&s_fc, g_angle_target_yaw);
             }
 
             Angle_Update(&s_fc, yaw, w_deg);
 
-            /* cmd_w 单位 rad/s, 与 Mecanum_Calc 的 w 同量纲 */
-            MecanumResult cmd = Mecanum_Calc(0.0f, s_fc.cmd_w);
+            /* ---- 前馈 + 平移 (V1.13.0) ----------------------------------
+             * 线速度与角速度一起下发, 才是圆弧: (v, ω=v/R) → 车头恒为切线。
+             * V1.13.0 之前这里是 Mecanum_Calc(0.0f, s_fc.cmd_w) —— 线速度写死
+             * 0, 只能原地转向, 走不出弧。
+             *
+             * @note `g_angle_ctrl_w_ff` **加在内环输出之后**, 是有意的:
+             *       angle_ctrl.c 的 `gyro_scale = 0.05` 使内环只看到 5% 的
+             *       真实角速度, 它不是真正的速度环。前馈若加在 PID 目标上
+             *       (target_w) 会被这个缩放揉坏; 加在输出上则几何量直通,
+             *       PID 只在此基础上修残差。详见 worker_task.h 的契约说明。
+             *
+             * cmd_w 单位 rad/s, 与 Mecanum_Calc 的 w 同量纲。 */
+            MecanumResult cmd = Mecanum_Calc(g_angle_ctrl_speed,
+                                             s_fc.cmd_w + g_angle_ctrl_w_ff);
             Send_commandmotor(&cmd);
         }
         else if (was_on)
@@ -120,7 +139,6 @@ void FC_Task(void *argument)
             s_fc.state = ANGLE_IDLE;
             was_on = 0;
         }
-
         osDelay(FC_TASK_PERIOD_MS);
     }
 }
@@ -164,10 +182,18 @@ void NLF_RunFlow(SystemMode_t mode)
             Nav_RunWaypoints();
             break;
 
+        case Event_ArcRun:
+            /* 跑一段定半径圆弧 (车头恒为切线)。参数先用默认值 ——
+             * 需要改半径/速度/角度就在触发前调 Arc_SetParam()。
+             * 见 algorithm/arc_path.h。 */
+            Arc_Run();
+            break;
+
         case Event_STOP:
             /* 急停: 关角度环 (FC_TASK 随即主动刹停)。
-             * 注意流程任务自身若正阻塞在导航/循迹里, 本分支拦不住它。 */
-            g_angle_ctrl_enable = 0;
+             * 注意流程任务自身若正阻塞在导航/循迹里, 本分支拦不住它 ——
+             * 包括正阻塞在 Arc_Run() 里的情况 (那份超时保护是兜底, 不是急停)。 */
+            Arc_Abort();                /* = 关环 + 清线速度/前馈, 取代原来那句裸的置 0 */
             break;
 
         /* ---- 循迹整体已移除 (V1.6.0) ----

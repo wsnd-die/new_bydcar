@@ -77,6 +77,24 @@ extern osThreadId_t nlfTaskHandle;
 extern volatile uint8_t g_angle_ctrl_enable;
 extern volatile float   g_angle_target_yaw;
 
+/* ---- V1.13.0 追加: 圆弧/平移量 ------------------------------------
+ * @note **默认全 0**, 因此不设置它们时 FC_TASK 的行为与 V1.12.0 完全一致
+ *       (纯原地转向, 线速度为 0)。这是向后兼容的扩展, 不动上面两条。
+ *
+ * 用法 (跑圆弧, 见 algorithm/arc_path.c):
+ *     g_angle_ctrl_speed  = v;        // 线速度
+ *     g_angle_ctrl_w_ff   = v / R;    // ★ 前馈角速度, 圆弧的几何量
+ *     g_angle_ctrl_enable = 1;
+ *
+ * @warning `g_angle_ctrl_w_ff` 是**前馈**, 它绕过 angle_ctrl 的两级 PID,
+ *          直接叠加在内环的输出上 (见 worker_task.c 的 FC_Task)。
+ *          加在输出而非 PID 目标上是有意的: angle_ctrl.c 的 `gyro_scale = 0.05`
+ *          使内环只看到 5% 的真实角速度, 不是真正的速度环, 前馈走目标会被揉坏。
+ *          副作用是它**不受 angle_ctrl 的 CFG_MAX_W 限幅约束** ——
+ *          调用方自己保证量程, arc_path 用 ARC_W_MAX 做这道校验。 */
+extern volatile float   g_angle_ctrl_speed;  /* 目标线速度 m/s, >0 前进 */
+extern volatile float   g_angle_ctrl_w_ff;   /* 前馈角速度 rad/s, 逆时针(CCW)为正 */
+
 /* ================================================================
  * API
  * ================================================================ */
