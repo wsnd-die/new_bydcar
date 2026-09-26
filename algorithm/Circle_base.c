@@ -109,7 +109,7 @@ void Circle_Follow(void)
     }
 
     /* ---- 3. 全向移动解算 (vx, vy, w=0) ---- */
-    motor = Mecanum_Calc_Full(g_circle_vx, g_circle_vy, 0.0f);
+    motor = Mecanum_Calc_Full_V(g_circle_vx, g_circle_vy, 0.0f);
 
     /* ---- 4. 发送电机指令 ---- */
     Send_commandmotor(&motor);

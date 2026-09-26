@@ -1,6 +1,7 @@
 #include "../hardware/Common_used.h"
 #include "mecanum.h"
 #include "can.h"
+#include "emm_5v.h"
 /**
   * @brief  麦轮单轮转速转换
   * @param  raw_speed : 原始计算速度值 (m/s 等效值)
@@ -105,7 +106,7 @@ MecanumResult Mecanum_Calc(float v, float w)
   *         - a = 半轮距, b = 半轴距
   *         - coeff = 1 / R (或含单位换算的 SPEED_COEFF)
   */
-MecanumResult Mecanum_Calc_Full(float vx, float vy, float w)
+MecanumResult Mecanum_Calc_Full_V(float vx, float vy, float w)
 {
     MecanumResult res = {0, 0, 0, 0, 0, 0, 0, 0};
     /* 静止直接返回 */
@@ -143,6 +144,25 @@ MecanumResult Mecanum_Calc_Full(float vx, float vy, float w)
     res.rr_speed = Mecanum_ProcessWheel(rr_raw, &res.rr_dir);
 
     return res;
+}
+
+/* ================================================================
+ *  速度模式执行器 —— 把 MecanumResult 下发四轮 (Emm_V5 速度环)
+ *  极性映射逐字节镜像 hardware/actuators/Send_motor.c 的
+ *  Send_commandmotor(): 前右/前左的方向位取反是底盘装机的硬件约定,
+ *  两处必须保持一致, 改动任何一边都要同步另一边。
+ * ================================================================ */
+void Mecanum_Vel_Execute(const MecanumResult *res)
+{
+    if (res == NULL)
+        return;
+
+    Emm_V5_Vel_Control(1, !res->fr_dir, res->fr_speed, 0, 0); /* 1号=前右 */
+    Emm_V5_Vel_Control(2,  res->rl_dir, res->rl_speed, 0, 0); /* 2号=后左 */
+    Emm_V5_Vel_Control(3, !res->fl_dir, res->fl_speed, 0, 0); /* 3号=前左 */
+    Emm_V5_Vel_Control(4,  res->rr_dir, res->rr_speed, 0, 0); /* 4号=后右 */
+    osDelay(5);
+    Emm_V5_Synchronous_motion(0);
 }
 
 uint32_t malu_cm_topluse_s(float cm)

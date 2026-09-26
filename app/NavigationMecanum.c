@@ -1,452 +1,193 @@
-#include "Common_used.h"
+/**
+ * @file    NavigationMecanum.c
+ * @brief   世界系位置闭环 —— OPS9 位姿反馈 → 三轴 PD → 电机速度环
+ *
+ *  控制链:
+ *     目标 (tx, ty, tyaw) ─┬─ x/y 轴 pid_type_def (Ki=0, 即 PD)
+ *                         └─ yaw 轴手写 PD (误差须 wrap 到 ±π)
+ *          世界系期望速度 → 软启动加速度斜坡 (缓启动)
+ *          → 世界→车体旋转 (当前 yaw)
+ *          → Mecanum_Calc_Full_V(vx, vy, w) 逆解
+ *          → Mecanum_Vel_Execute() 下发电机速度环 (Emm_V5_Vel_Control)
+ *
+ *  运行环境: NLF_TASK (阻塞式流程任务), 100Hz (osDelay(10))。
+ *  与 FC_TASK 的电机控制权契约见 worker_task.c 文件头:
+ *  入口先置 g_angle_ctrl_enable = 0 并 osDelay(20), 等 FC_TASK 下降沿零速,
+ *  此后本文件独占电机命令。
+ *
+ *  反馈源: locator_ops9 (device/ops9_g491_uart3.c), 世界系 x/y/yaw,
+ *  单位 m / rad。update() 由 ops9imu_fuction 任务每 ~6ms 调一次,
+ *  本文件只调 get_pose() (GetLatest 是消费式读取, 多调 update 会抢帧)。
+ */
+#include "Common_used.h"          /* libc + HAL + FreeRTOS + osDelay */
 #include "NavigationMecanum.h"
-#include "Mecanum_Move.h"
-#include "hwt_imu.h"
-#include "worker_task.h"
-#include "mecanum.h"
-#include "Send_motor.h"
-#include "Nav_position.h"
-/* ============================================================
- * 全局变量
- * ============================================================ */
+#include "mecanum.h"              /* MecanumResult / Mecanum_Calc_Full_V / Mecanum_Vel_Execute */
+#include "pid.h"                  /* pid_type_def */
+#include "worker_task.h"          /* g_angle_ctrl_enable (角度环契约量) */
+#include "ops9_g491_uart3.h"      /* extern const LocatorDev_t locator_ops9 */
+#include "pose_data.h"            /* PoseData_t */
+#include <math.h>
 
-/* 当前自身位姿（世界坐标系），上电默认原点 */
+/* ==================================================================
+ * 全局量 (唯一定义处, extern 声明在 NavigationMecanum.h)
+ * ================================================================== */
+
 World_Dir_t Self_Dir = {0.0f, 0.0f, 0.0f};
 
-/* 循迹完成后置 1: 下一次 FeDuan 用速度模式纠正到点 */
-volatile uint8_t g_nav_speed_mode = 0;
+World_Dir_t g_waypoints[NAV_WAYPOINT_MAX];
+uint8_t     g_waypoint_count = 0;
 
-/*
- * 路径点数组（世界坐标系）
- *
- * 字段: { x(m), y(m), yaw(rad) }
- *
- * 角度可使用 MECANUM_DEG_TO_RAD 辅助:
- *   N 度 → N * MECANUM_DEG_TO_RAD
- *
- * 修改此数组内容和你需要的目标点，
- * 同时更新 g_waypoint_count 为实际点数。
- */
-World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
+/* ==================================================================
+ * 静态工具
+ * ================================================================== */
 
-    /* ---- 示例路径（可根据实际修改）---- */
-
-
-    {0.428f,    0.726f,  0.0f  * MECANUM_DEG_TO_RAD },//奖杯二维码点
-
-    {-0.16f,      0.15f,      -90.0f * MECANUM_DEG_TO_RAD },//物料循线点
-
-    {    -0.836f,     -0.466f,   0.0f  * MECANUM_DEG_TO_RAD },  /*a点*/
-    {    -0.235f,     -0.21f,   0.0f  * MECANUM_DEG_TO_RAD },/*b点*/
-    {    0.358f,     -0.60f,   0.0f  * MECANUM_DEG_TO_RAD },  /*c点 */
-    {    -0.2f,     -0.10f,  0.0f  * MECANUM_DEG_TO_RAD },  /*d点*/
-    {    0.21f,     -0.5f,   0.0f  * MECANUM_DEG_TO_RAD },  /* e点 */
-
-    {  -0.163f,    0.191f, 0.0f * MECANUM_DEG_TO_RAD },  /* 奖杯二维码点*/
-
-    {   -0.1f,    -0.24f, 90.0f * MECANUM_DEG_TO_RAD },  /* 奖杯寻线点 */
-
-    {    0.405f,     1.03f,  0.0f * MECANUM_DEG_TO_RAD },  /* 亚军点*/
-    {    0.06f,    0.27f,  0.0f * MECANUM_DEG_TO_RAD },  /* 冠军点 */
-    {    0.06f,    0.27f,   0.0f * MECANUM_DEG_TO_RAD },  /* 季军点 */
-
-    {-0.483f,-0.0,0},//回家点
-    {0,-0.244f,0},
-    {-1.078f,-0.18,0},
-
-};
-
-/* 实际使用的路径点数量 */
-uint8_t  g_waypoint_count = 13;
-
-
-/* ============================================================
- * 循迹后点位校准
- *
- * 循迹完成时车停的位置 (World_position_get) 与设计坐标有偏差,
- * 用"实测终点 + 固定偏移"重算 a 点 / 亚军点:
- *
- *   目标点 = 实测循迹终点 + (目标点设计值 - 循迹终点设计值)
- *
- * 偏移量可现场调整, 改下面宏即可 (单位: m)。
- * ============================================================ */
-
-/* ---- 目标点设计坐标 (世界系, m) ---- */
-#define CALIB_A_X        (-0.844f)     /* a点设计值 */
-#define CALIB_A_Y        (-0.466f)
-#define CALIB_YAJUN_X    ( 0.48f)     /* 亚军点设计值 */
-#define CALIB_YAJUN_Y    ( 1.065f)
-
-/* ---- 循迹终点设计坐标 (世界系, m) ---- */
-#define TRACE_END_A_X    ( 2.186f/2)       /* 物料循迹(LinFolL)终点设计值 */
-#define TRACE_END_A_Y    ( 0.337f/2)
-#define TRACE_END_YAJUN_X (1.126f/2)      /* 奖杯循迹(LinFolR)终点设计值 */
-#define TRACE_END_YAJUN_Y (0.985f/2)
-
-/* ---- 固定偏移 = 目标点设计值 - 循迹终点设计值 ---- */
-#define CALIB_A_OFF_X    (CALIB_A_X - TRACE_END_A_X)
-#define CALIB_A_OFF_Y    (CALIB_A_Y - TRACE_END_A_Y)
-#define CALIB_YAJUN_OFF_X (CALIB_YAJUN_X - TRACE_END_YAJUN_X)
-#define CALIB_YAJUN_OFF_Y (CALIB_YAJUN_Y - TRACE_END_YAJUN_Y)
-
-
-/* ============================================================
- * 内部辅助函数 / 配置
- * ============================================================ */
-
-/**
- * @brief 将角度归一化到 [-PI, PI]
- */
-static float Nav_NormalizeAngle(float angle)
+/** @brief 角度归一化到 [-π, π] */
+static float NAV_WrapPi(float a)
 {
-    while (angle > MECANUM_PI) {
-        angle -= 2.0f * MECANUM_PI;
-    }
-    while (angle < -MECANUM_PI) {
-        angle += 2.0f * MECANUM_PI;
-    }
-    return angle;
+    while (a >  MECANUM_PI) a -= 2.0f * MECANUM_PI;
+    while (a < -MECANUM_PI) a += 2.0f * MECANUM_PI;
+    return a;
 }
 
-/* ============================================================
- * 公开函数
- * ============================================================ */
+static float NAV_Clamp(float v, float lo, float hi)
+{
+    return (v < lo) ? lo : ((v > hi) ? hi : v);
+}
+
+/**
+ * @brief 软启动: 对速度指令做加速度斜坡
+ * @param cur    当前指令值
+ * @param target 期望指令值
+ * @param acc    加速度限幅 (m/s² 或 rad/s²)
+ * @param dt     控制周期 (s)
+ * @retval 斜坡后的指令值
+ */
+static float NAV_Ramp(float cur, float target, float acc, float dt)
+{
+    float max_dv = acc * dt;
+    return cur + NAV_Clamp(target - cur, -max_dv, max_dv);
+}
+
+/** @brief 零速停车 (Mecanum_Calc_Full_V(0,0,0) → 执行器) */
+static void NAV_Stop(void)
+{
+    MecanumResult z = Mecanum_Calc_Full_V(0.0f, 0.0f, 0.0f);
+    Mecanum_Vel_Execute(&z);
+}
+
+/* ==================================================================
+ * 世界系位置闭环
+ * ================================================================== */
 
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 {
-    float world_dx, world_dy, dtheta, dist;
-    uint32_t timeout_ms;
-    bool success;
+    /* 1. 夺回电机控制权: 按契约关角度环, 等 FC_TASK 下降沿零速
+     *    (worker_task.c:28-35) */
+    g_angle_ctrl_enable = 0;
+    osDelay(20);
 
-    /* ---- 1. 计算世界坐标系下的差值 ---- */
-    world_dx = target_x - Self_Dir.x;
-    world_dy = target_y - Self_Dir.y;
+    /* 2. x/y 轴用 pid_type_def (Ki=0 即 PD, PID_POSITION 位置式)。
+     *    yaw 不用它: PID_calc 内部误差不 wrap, 跨 ±π 会跳 2π, 手写。 */
+    pid_type_def pid_x, pid_y;
+    fp32 k[3] = {NAV_KP_XY, 0.0f, NAV_KD_XY};
+    PID_init(&pid_x, PID_POSITION, k, NAV_VMAX_XY, 0.0f);
+    PID_init(&pid_y, PID_POSITION, k, NAV_VMAX_XY, 0.0f);
 
-    /* 角度差取最短路径 */
-    dtheta = Nav_NormalizeAngle(target_yaw - Self_Dir.yaw);
+    /* 3. 软启动斜坡状态 (世界系) */
+    float vx_cmd = 0.0f, vy_cmd = 0.0f, w_cmd = 0.0f;
+    float prev_eyaw = 0.0f;
 
-    /* ---- 2. 到位判断 ---- */
-    dist = sqrtf(world_dx * world_dx + world_dy * world_dy);
-    if (dist < 0.005f && fabsf(dtheta) < 0.01f) {
-        return true;
-    }
+    uint32_t t0 = osKernelGetTickCount();
+    uint8_t  arrive  = 0u;   /* 连续到达 tick 数 */
+    uint8_t  invalid = 0u;   /* 反馈连续无效 tick 数 */
 
-    /* ---- 3. 计算超时（预估耗时 × 3，保底 5s）---- */
+    PoseData_t pose;
+
+    for (;;)
     {
-        float est_s = dist / 0.05f;  /* 0.05 m/s 保守估计最慢速度 */
-        if (est_s < 5.0f) est_s = 5.0f;
-        timeout_ms = (uint32_t)(est_s * 1000.0f);  /* ×2 安全余量 */
-    }
+        locator_ops9.get_pose(&pose);   /* 只读, 不调 update (ops9imu 任务在喂) */
 
-    /* ---- 4. 速度模式 + 编码器反馈，单段走完 ---- */
-    success = Mecanum_WorldMoveWithEncoder(
-        &g_mecanum_config,
-        world_dx, world_dy,
-        Self_Dir.yaw,
-        dtheta,
-        1.0f,          /* 全速 */
-        g_mecanum_config.acceleration,           /* acc */
-        timeout_ms
-    );
-
-    if (!success) {
-        return false;
-    }
-
-    /* ---- 5. 更新自身位姿 ---- */
-    Self_Dir.x   = target_x;
-    Self_Dir.y   = target_y;
-    Self_Dir.yaw = Nav_NormalizeAngle(Self_Dir.yaw + dtheta);
-
-    return true;
-}
-/*==============================================
- * 车体坐标运动 (Body-frame)
- *   平移: 麦轮解算 (世界坐标, 不含旋转)
- *   旋转: 交由 FC_TASK 角度环 (串级PID) 执行
- * ============================================================ */
-
-
-/**
- * @brief 车体坐标运动
- *        forward_m/left_m: 车体坐标平移量 (m), 麦轮单独执行
- *        rotate_rad:       平移到位后用 AngleCtrl 旋转 (rad, CCW+)
- */
-bool Nav_MoveBody(float forward_m, float left_m, float rotate_rad)
-{
-    float dist;
-    bool  success;
-
-    dist = sqrtf(forward_m * forward_m + left_m * left_m);
-    if (dist < 0.005f && fabsf(rotate_rad) < 0.01f) {
-        return true;
-    }
-
-    {
-        float target_deg = rotate_rad * (180.0f / M_PI);
-        float err;
-        uint16_t guard = 0;
-
-        g_angle_target_yaw = target_deg;
-        g_angle_ctrl_enable = 1;              /* 打开 FC_TASK 角度环 */
-
-        while (guard++ < 150) {               /* 超时约8s, 防角度环异常卡死 */
-            err = target_deg - g_hwt_imu_yaw;
-            while (err >  180.0f) err -= 360.0f;
-            while (err < -180.0f) err += 360.0f;
-            if (fabsf(err) <= 2.0f) break;
-            osDelay(10);
-        }
-        g_angle_ctrl_enable = 0;              /* 转完关闭, 避免与后面平移抢电机 */
-        osDelay(20);                          /* 等 FC_TASK 停止输出 */
-        Self_Dir.yaw = g_hwt_imu_yaw_rad;     /* 用实测航向, 不要硬设目标 */
-    }
-    /* ---- 3. 平移段: 车体坐标 → 麦轮 (dtheta=0, 不旋转) ---- */
-    if (dist >= 0.005f) {
-        float est_s = dist / 0.05f;
-        if (est_s < 3.0f) est_s = 3.0f;
-        uint32_t timeout_ms = (uint32_t)(est_s * 1000.0f);
-
-        success = Mecanum_MoveWithEncoder(
-            &g_mecanum_config,
-            forward_m, left_m, 0.0f,  /* dtheta=0, 纯平移 */
-            1.0f, g_mecanum_config.acceleration, timeout_ms
-        );
-        if (!success) return false;
-        float cos_y = cosf(Self_Dir.yaw), sin_y = sinf(Self_Dir.yaw);
-        Self_Dir.x += forward_m * cos_y - left_m * sin_y;
-        Self_Dir.y += forward_m * sin_y + left_m * cos_y;
-    }
-
-    /* ---- 第二段角度矫正: 只用实测漂移, 超阈值才修, 到位收紧, 结束写实测航向 ---- */
-    {
-        float target_deg = rotate_rad * (180.0f / M_PI);
-        float drift;
-        uint16_t guard = 0;
-
-        drift = target_deg - g_hwt_imu_yaw;
-        while (drift >  180.0f) drift -= 360.0f;
-        while (drift < -180.0f) drift += 360.0f;
-
-        if (fabsf(drift) > 3.5f) {            /* 真实漂移超阈值才修, 避免空转 */
-            float err;
-
-            g_angle_target_yaw = target_deg;
-            g_angle_ctrl_enable = 1;          /* 打开 FC_TASK 角度环 */
-
-            while (guard++ < 100) {           /* 超时1s, 防角度环异常卡死 */
-                err = target_deg - g_hwt_imu_yaw;
-                while (err >  180.0f) err -= 360.0f;
-                while (err < -180.0f) err += 360.0f;
-                if (fabsf(err) <= 3.0f) break;   /* 与第一段一致; FC_TASK 容差已收紧到1°, 实际能修到更小 */
-                osDelay(10);
+        if (!pose.valid)
+        {
+            /* 反馈无效: 短时 (≤ NAV_MAX_INVALID_TICKS) 冻结指令继续跑,
+             * 超限则零速保持并清斜坡, 恢复后从零重新软启动。
+             * 当前 OPS9 UART3 接收链未修时 valid 恒 0, 本路径是稳态:
+             * 零速保持 → 超时返回 false, 全程不动车, 不误驱动。 */
+            invalid++;
+            arrive = 0;
+            if (invalid > NAV_MAX_INVALID_TICKS)
+            {
+                vx_cmd = 0.0f; vy_cmd = 0.0f; w_cmd = 0.0f;
+                NAV_Stop();
             }
-
-            g_angle_ctrl_enable = 0;          /* 转完关闭, 避免与后面平移抢电机 */
-            osDelay(20);                      /* 等 FC_TASK 停止输出 */
         }
-        Self_Dir.yaw = g_hwt_imu_yaw_rad;     /* 用实测航向, 不要硬设目标 */
-    }
+        else
+        {
+            invalid = 0;
 
+            float ex   = target_x - pose.x;
+            float ey   = target_y - pose.y;
+            float eyaw = NAV_WrapPi(target_yaw - pose.yaw);
 
-    return true;
-}
+            /* PD 输出 = 世界系期望速度 (m/s / rad/s) */
+            float vx_w = PID_calc(&pid_x, pose.x, target_x);
+            float vy_w = PID_calc(&pid_y, pose.y, target_y);
+            float w_w  = NAV_KP_YAW * eyaw + NAV_KD_YAW * (eyaw - prev_eyaw);
+            prev_eyaw = eyaw;
+            w_w = NAV_Clamp(w_w, -NAV_VMAX_W, NAV_VMAX_W);
 
-/** @brief 前进/后退 (车体坐标) */
-bool Nav_MoveForward(float distance_m)
-{
-    return Nav_MoveBody(distance_m, 0.0f, 0.0f);
-}
+            /* 软启动: 三轴独立加速度斜坡 (缓启动) */
+            vx_cmd = NAV_Ramp(vx_cmd, vx_w, NAV_ACC_XY, NAV_DT);
+            vy_cmd = NAV_Ramp(vy_cmd, vy_w, NAV_ACC_XY, NAV_DT);
+            w_cmd  = NAV_Ramp(w_cmd,  w_w,  NAV_ACC_W,  NAV_DT);
 
-/** @brief 左移/右移 (车体坐标) */
-bool Nav_MoveLeft(float distance_m)
-{
-    return Nav_MoveBody(0.0f, distance_m, 0.0f);
-}
+            /* 世界 → 车体 (BollLocator.c:203-207 同式, 用当前 yaw) */
+            float c = cosf(pose.yaw), s = sinf(pose.yaw);
+            float bvx =  vx_cmd * c + vy_cmd * s;
+            float bvy = -vx_cmd * s + vy_cmd * c;
 
-/** @brief 原地旋转 */
-bool Nav_Rotate(float angle_rad)
-{
-    return Nav_MoveBody(0.0f, 0.0f, angle_rad);
-}
+            MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_cmd);
+            Mecanum_Vel_Execute(&res);
 
-void Nav_CalibrateAfterTrace(bool is_trophy)
-{
-    World_Dir_t p = World_position_get();
-
-    if (is_trophy) {
-        g_waypoints[9].x = p.x/2 + CALIB_YAJUN_OFF_X;
-        g_waypoints[9].y = p.y/2 + CALIB_YAJUN_OFF_Y;
-        printf("[CAL] 亚军点 <- (%.3f,%.3f) 终点=(%.3f,%.3f)\r\n",
-               (double)g_waypoints[9].x, (double)g_waypoints[9].y,
-               (double)p.x, (double)p.y);
-    } else {
-        g_waypoints[2].x = p.x/2 + CALIB_A_OFF_X;
-        g_waypoints[2].y = p.y/2 + CALIB_A_OFF_Y;
-        printf("[CAL] a点 <- (%.3f,%.3f) 终点=(%.3f,%.3f)\r\n",
-               (double)g_waypoints[2].x, (double)g_waypoints[2].y,
-               (double)p.x, (double)p.y);
-    }
-}
-
-
-/* ============================================================
- * 速度模式到位控制 — 编码器+陀螺仪定位
- * ============================================================ */
-#define NAV_KP_POS   1.2f    /* 位置P: m/s 每 m 误差 */
-#define NAV_KP_YAW   2.5f    /* 航向P: rad/s 每 rad 误差 */
-#define NAV_V_MAX    0.5f    /* 最大线速度 m/s */
-#define NAV_W_MAX    1.8f    /* 最大角速度 rad/s */
-#define NAV_POS_TOL  0.015f  /* 到位距离 m */
-#define NAV_YAW_TOL  0.04f   /* 到位航向 rad */
-#define NAV_TIMEOUT  500U    /* 超时 ×10ms ≈5s */
-
-/**
- * @brief 速度模式到位控制(世界系目标)
- *        用编码器+陀螺仪里程计 World_position_get() 做反馈,
- *        位置误差→vx/vy, 航向误差→w, Mecanum_Calc_Full 输出速度。
- * @param tx,ty,tyaw 目标世界坐标(m)/航向(rad)
- */
-bool Nav_TrackPose(float tx, float ty, float tyaw)
-{
-    uint16_t guard = 0;
-    World_Dir_t pos;
-    MecanumResult motor;
-
-    g_angle_ctrl_enable = 0;   /* 不用 FC_TASK 角度环, 防止抢电机 */
-
-    while (guard++ < NAV_TIMEOUT) {
-        pos = World_position_get();          /* 编码器+陀螺仪里程计 */
-
-        float dx = tx - pos.x;
-        float dy = ty - pos.y;
-        float dyaw = Nav_NormalizeAngle(tyaw - pos.yaw);
-        float dist = sqrtf(dx * dx + dy * dy);
-
-        /* 到位: 停车 + 更新自身位姿 */
-        if (dist < NAV_POS_TOL && fabsf(dyaw) < NAV_YAW_TOL) {
-            motor = Mecanum_Calc_Full(0.0f, 0.0f, 0.0f);
-            Send_commandmotor(&motor);
-            Self_Dir = pos;
-            return true;
+            /* 到达: 三轴误差均入容差, 连续 NAV_ARRIVE_TICKS 拍 */
+            if (fabsf(ex) <= NAV_TOL_XY && fabsf(ey) <= NAV_TOL_XY &&
+                fabsf(eyaw) <= NAV_TOL_YAW)
+            {
+                if (++arrive >= NAV_ARRIVE_TICKS)
+                    break;
+            }
+            else
+            {
+                arrive = 0;
+            }
         }
 
-        /* 位置 P 控制: 世界速度 → 限幅 → 旋转到车体系 */
-        float vx_w = NAV_KP_POS * dx;
-        float vy_w = NAV_KP_POS * dy;
-        float v_w_mag = sqrtf(vx_w * vx_w + vy_w * vy_w);
-        if (v_w_mag > NAV_V_MAX) {
-            vx_w *= NAV_V_MAX / v_w_mag;
-            vy_w *= NAV_V_MAX / v_w_mag;
-        }
-        float v_bx =  vx_w * cosf(pos.yaw) + vy_w * sinf(pos.yaw);  /* 车体前进 */
-        float v_by = -vx_w * sinf(pos.yaw) + vy_w * cosf(pos.yaw);  /* 车体左移 */
-
-        /* 航向 P 控制 */
-        float w = NAV_KP_YAW * dyaw;
-        if (w >  NAV_W_MAX) w =  NAV_W_MAX;
-        if (w < -NAV_W_MAX) w = -NAV_W_MAX;
-
-        motor = Mecanum_Calc_Full(v_bx, v_by, w);
-        Send_commandmotor(&motor);
-        osDelay(10);
-    }
-
-    /* 超时: 停车 */
-    motor = Mecanum_Calc_Full(0.0f, 0.0f, 0.0f);
-    Send_commandmotor(&motor);
-    Self_Dir = World_position_get();
-    return false;
-}
-
-bool Nav_FeDuanPoint() {
-    static uint8_t PontIntex=0;
-
-
-
-    /* 临界区 */
-
-
-    /* 纯位置模式: 固定用 Mecanum_MoveWithEncoder, 不再走速度模式(Nav_TrackPose) */
-    {
-        uint8_t idx = PontIntex++;   /* 先取再推进, 避免同一表达式内多次读写(UB) */
-        if (!Nav_MoveBody(g_waypoints[idx].x,
-                          g_waypoints[idx].y,
-                          g_waypoints[idx].yaw)) {
+        /* 超时: 零速停车, 仅反馈有效时刷新 Self_Dir */
+        if ((osKernelGetTickCount() - t0) >= NAV_TIMEOUT_MS)
+        {
+            NAV_Stop();
+            if (pose.valid)
+            {
+                Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
+            }
             return false;
         }
-    }
-    if (PontIntex==13)
-    {
-        Nav_MoveBody(g_waypoints[PontIntex].x,
-                          g_waypoints[PontIntex].y,
-                          g_waypoints[PontIntex].yaw);
-        PontIntex++;
 
-        Nav_MoveBody(g_waypoints[PontIntex].x,
-                          g_waypoints[PontIntex].y,
-                          g_waypoints[PontIntex].yaw);
-        PontIntex++;
+        osDelay(NAV_LOOP_TICKS);   /* 10ms → 100Hz */
     }
 
+    /* 到达: 零速停车 + 刷新 Self_Dir */
+    NAV_Stop();
+    Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
     return true;
 }
 
-
-/**
- * @brief 依次执行所有路径点
- */
 bool Nav_RunWaypoints(void)
 {
-    for (uint8_t i = 0; i < g_waypoint_count; i++) {
-        if (!Nav_MoveBody(g_waypoints[i].x,
-                           g_waypoints[i].y,
-                           g_waypoints[i].yaw)) {
+    for (uint8_t i = 0; i < g_waypoint_count; i++)
+    {
+        if (!Nav_GoToWorld(g_waypoints[i].x, g_waypoints[i].y, g_waypoints[i].yaw))
             return false;
-        }
     }
-
     return true;
 }
-
-
-/* ============================================================
- * 测试函数（保留）
- * ============================================================ */
-
-void Chassis_WorldMoveTest(void)
-{
-    MecanumMove_t move;
-    bool success;
-
-    success = Mecanum_CalculateWorldMove(
-        &g_mecanum_config,
-
-        0.00f,                         /* 世界X：前进50 cm */
-       0.0f,                          /* 世界Y：向右50 cm */
-        0.0f * MECANUM_DEG_TO_RAD,    /* 开始航向0° */
-        90.0f * MECANUM_DEG_TO_RAD,   /* 逆时针旋转50° */
-
-        &move
-    );
-
-    if (success) {
-        Mecanum_ExecuteMove(
-            &g_mecanum_config,
-            &move
-        );
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-

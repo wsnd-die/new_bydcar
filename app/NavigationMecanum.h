@@ -34,6 +34,26 @@ extern World_Dir_t Self_Dir;
 /* 最大路径点数量 */
 #define NAV_WAYPOINT_MAX  32
 
+/* ============================================================
+ * 世界系位置闭环参数 (100Hz, OPS9 反馈)
+ * 全部为初版整定值, 上机按实际响应调, 改完记 clauderecord。
+ * ============================================================ */
+#define NAV_DT                 0.01f   /* 名义控制周期 s (执行器内 osDelay(5) 使实际 ~15ms) */
+#define NAV_LOOP_TICKS         10u     /* osDelay(10) → 名义 100Hz */
+#define NAV_TIMEOUT_MS         10000u  /* 单点超时 ms */
+#define NAV_KP_XY              1.0f    /* 平移 P: 0.4m 误差 → 0.4 m/s */
+#define NAV_KD_XY              0.0f    /* 平移 D: 首版关 (OPS9 噪声放大风险) */
+#define NAV_KP_YAW             2.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
+#define NAV_KD_YAW             0.0f    /* 航向 D: 首版关 */
+#define NAV_VMAX_XY            0.4f    /* 平移速度限幅 m/s */
+#define NAV_VMAX_W             1.0f    /* 角速度限幅 rad/s */
+#define NAV_ACC_XY             0.3f    /* 平移加速度 m/s² (软启动) */
+#define NAV_ACC_W              1.0f    /* 角加速度 rad/s² (软启动) */
+#define NAV_TOL_XY             0.03f   /* 到达容差 3cm */
+#define NAV_TOL_YAW            0.05f   /* 到达容差 ~2.9° */
+#define NAV_ARRIVE_TICKS       5u      /* 连续 5 拍判到达 (抗单帧抖动) */
+#define NAV_MAX_INVALID_TICKS  20u     /* OPS9 离线容忍 0.2s, 超限零速保持 */
+
 /*
  * 路径点数组（世界坐标系）
  * 每个元素: { X(m), Y(m), yaw(rad) }
@@ -49,17 +69,21 @@ extern uint8_t      g_waypoint_count;
 void Chassis_WorldMoveTest(void);
 
 /**
- * @brief 导航到目标世界坐标
+ * @brief 导航到目标世界坐标（世界系位置闭环）
  *
- * 根据当前位姿 Self_Dir 与目标位姿的差值，
- * 调用 Mecanum_CalculateWorldMove 完成平移 + 旋转的同步规划，
- * 然后执行并等待动作完成，最后更新 Self_Dir。
+ * 以 OPS9 位姿 (locator_ops9.get_pose, 世界系 x/y/yaw) 为反馈，
+ * 三轴并行 PD (Ki=0) 输出世界系期望速度 → 软启动加速度斜坡 →
+ * 世界→车体旋转 → Mecanum_Calc_Full_V → Mecanum_Vel_Execute
+ * 下发电机速度环。阻塞直到到达或超时，退出时零速停车。
  *
+ * @note 运行于 NLF_TASK 上下文；入口按契约关角度环
+ *       (g_angle_ctrl_enable=0 + osDelay(20)) 独占电机控制权。
+ *       反馈无效按 NAV_MAX_INVALID_TICKS 容忍，超限零速保持。
  * @param target_x    目标世界 X 坐标，单位：m
  * @param target_y    目标世界 Y 坐标，单位：m
  * @param target_yaw  目标世界航向角，单位：rad
- * @return true       已到达或运动已执行
- * @return false      解算失败或执行失败
+ * @return true       已到达（连续 NAV_ARRIVE_TICKS 拍误差入容差）
+ * @return false      超时（NAV_TIMEOUT_MS，含反馈长期无效）
  */
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
 bool Nav_FeDuanPoint(void);
