@@ -296,7 +296,7 @@ void ops9imu_fuction(void *argument)
     active_locator->update();
     active_locator->get_pose(&o_pose);
     // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
-    osDelay(10);
+    osDelay(6);
   }
   /* USER CODE END ops9imu_fuction */
 }

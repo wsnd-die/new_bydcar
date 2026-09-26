@@ -77,7 +77,7 @@ void BL_Stop(BollLocator *bl)
     bl->cmd_vy    = 0.0f;
     bl->travel_est = 0.0f;
 
-    MecanumResult motor = Mecanum_Calc_Full(0.0f, 0.0f, 0.0f);
+    MecanumResult motor = Mecanum_Calc_Full_V(0.0f, 0.0f, 0.0f);
     Send_commandmotor(&motor);
 }
 
@@ -153,7 +153,7 @@ void BL_Update(BollLocator *bl)
         bl->cur_speed = 0.0f;
         bl->cmd_vx    = 0.0f;
         bl->cmd_vy    = 0.0f;
-        MecanumResult motor = Mecanum_Calc_Full(0.0f, 0.0f, 0.0f);
+        MecanumResult motor = Mecanum_Calc_Full_V(0.0f, 0.0f, 0.0f);
         Send_commandmotor(&motor);
         return;
     }
@@ -217,7 +217,7 @@ void BL_Update(BollLocator *bl)
     /* ============================================================
      * 6. 逆运动学 + 发送电机命令
      * ============================================================ */
-    MecanumResult motor = Mecanum_Calc_Full(bl->cmd_vx, bl->cmd_vy, 0.0f);
+    MecanumResult motor = Mecanum_Calc_Full_V(bl->cmd_vx, bl->cmd_vy, 0.0f);
     Send_commandmotor(&motor);
 }
 

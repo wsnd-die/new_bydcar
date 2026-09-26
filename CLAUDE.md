@@ -332,6 +332,8 @@ active_locator->get_pose(&robot_pose);
 | V1.14.0 | 2026-09-26 | 删除：TBOP 里程计自动标定整块（死代码 + 跨层违规）；`Odometry_Apply_Calib` 剥离为单分支 | [2026-09-26](clauderecord/2026-09-26.md) |
 | V1.14.1 | 2026-09-26 | 修改：USART3(OPS9) 接收改 DMA+IDLE；`HAL_UARTEx_RxEventCallback` 收归 `usart.c` 做唯一分发器 | [2026-09-26](clauderecord/2026-09-26.md) |
 | V1.14.2 | 2026-09-26 | 修复：I2C3 改 DMA 读后未接通 I2C3_EV/ER 中断（传输永不完成）；补 NVIC + IRQHandler + 信号量完成同步 | [2026-09-26](clauderecord/2026-09-26.md) |
+| V1.15.0 | 2026-09-26 | 新增：世界系位置闭环（三轴 PD + 软启动 + OPS9 反馈）；`Mecanum_Vel_Execute` 执行器；接通 `Nav_GoToWorld`/`Nav_RunWaypoints` | [2026-09-26](clauderecord/2026-09-26.md) |
+| V1.15.1 | 2026-09-26 | 修复：`mecanum.h` 声明 `Mecanum_Calc_V`→`Mecanum_Calc`（与实现对齐，worker_task 编译错误） | [2026-09-26](clauderecord/2026-09-26.md) |
 | V1.11.0 | 2026-09-25 | 新增：HWT906 读全 0x34~0x40 九轴（块读 + 退化回退）；`wz` 改取陀螺仪；`PoseData_t` 追加 `ax/ay/az` | [2026-09-25](clauderecord/2026-09-25.md) |
 | V1.12.0 | 2026-09-25 | 新增：接通任务流程 —— 创建 FC_TASK / NLF_TASK，defaultTask 改走调度器循环；撤 V1.11.0 临时脚手架；堆 8096→16384 | [2026-09-25](clauderecord/2026-09-25.md) |
 | V1.13.0 | 2026-09-25 | 新增：定半径圆弧 + 切线航向 —— `algorithm/arc_path`；契约追加线速度与前馈角速度；`Event_ArcRun` | [2026-09-25](clauderecord/2026-09-25.md) |

@@ -107,7 +107,7 @@ void OPS9_G491_UART3_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size);
 void OPS9_G491_UART3_ErrorCallback(UART_HandleTypeDef *huart);
 
 /**/
-void OPS9_G491_UART3_EventCallback(void);
+void OPS9_G491_UART3_EventCallback(UART_HandleTypeDef *huart, uint16_t Size);
 
 /* 是否收到过新的合法帧；读取后清除 new-data 标志。 */
 uint8_t OPS9_G491_UART3_GetLatest(ops9_data_t *out);

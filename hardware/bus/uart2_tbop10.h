@@ -6,7 +6,7 @@
 #include <string.h>
 
 #ifndef LEGACY_USART2_ODOM_ENABLE
-#define LEGACY_USART2_ODOM_ENABLE 1
+#define LEGACY_USART2_ODOM_ENABLE 0
 #endif
 
 #define TB_RX_BUFF_SIZE 64

@@ -47,7 +47,16 @@ MecanumResult Mecanum_Calc(float v, float w);
   * @param  w  : 角速度 (rad/s)，逆时针为正
   * @retval MecanumResult 四个轮子的转速和方向
   */
-MecanumResult Mecanum_Calc_Full(float vx, float vy, float w);
+MecanumResult Mecanum_Calc_Full_V(float vx, float vy, float w);
+
+/**
+  * @brief  速度模式执行器：把 MecanumResult 下发四轮并同步启动
+  * @note   极性映射与 Send_commandmotor() 完全一致：
+  *         1号=前右(dir 取反), 2号=后左, 3号=前左(dir 取反), 4号=后右，
+  *         acc 固定 130；内含 osDelay(5) 等 CAN 总线沉降后再同步触发。
+  * @param  res : Mecanum_Calc / Mecanum_Calc_Full_V 的输出（NULL 直接返回）
+  */
+void Mecanum_Vel_Execute(const MecanumResult *res);
 
 uint32_t malu_cm_topluse_s(float cm);
 

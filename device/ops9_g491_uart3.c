@@ -256,10 +256,12 @@ HAL_StatusTypeDef OPS9_G491_UART3_Attach(UART_HandleTypeDef *huart)
 
 
 
-void OPS9_G491_UART3_EventCallback(void) {
+void OPS9_G491_UART3_EventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 
+
+    if (Size == 28) {
     s_ops9.valid_frames=1;
-
+}
     HAL_UARTEx_ReceiveToIdle_DMA(
     &huart3,Ops_payload,sizeof(Ops_payload)
 );
