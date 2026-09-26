@@ -647,6 +647,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     OPS9_G491_UART3_RxCpltCallback(&huart3);
   }
 }
+
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
 
@@ -658,7 +659,14 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     OPS9_G491_UART3_ErrorCallback(&huart3);
   }
 }
+void HAL_UARTEx_RXEVENT_IDLE(UART_HandleTypeDef *huart,uint16_t Size) {
 
+  if (huart->Instance == USART3) {
+     OPS9_G491_UART3_EventCallback();
+   }
+
+
+}
 
 /* USER CODE END 1 */
 

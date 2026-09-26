@@ -53,7 +53,7 @@ typedef struct
 } ops9_t;
 
 
-void ops9_init(ops9_t *ctx, ops9_frame_callback_t frame_cb, void *user);
+void ops9_init(ops9_t *ctx,  void *user);
 void ops9_input_byte(ops9_t *ctx, uint8_t byte);
 void ops9_input(ops9_t *ctx, const uint8_t *data, size_t len);
 uint8_t  ops9_get_latest(const ops9_t *ctx, ops9_data_t *out);
@@ -102,6 +102,9 @@ void OPS9_G491_UART3_RxCpltCallback(UART_HandleTypeDef *huart);
 /* 放进 HAL_UART_ErrorCallback()，发生 ORE/FE/NE 后自动重启接收。 */
 void OPS9_G491_UART3_ErrorCallback(UART_HandleTypeDef *huart);
 
+/**/
+void OPS9_G491_UART3_EventCallback(void);
+
 /* 是否收到过新的合法帧；读取后清除 new-data 标志。 */
 uint8_t OPS9_G491_UART3_GetLatest(ops9_data_t *out);
 
@@ -118,7 +121,7 @@ HAL_StatusTypeDef OPS9_G491_UART3_SetY(float y_mm);
 
 /* 按手册在命令之间留 10ms。 */
 HAL_StatusTypeDef OPS9_G491_UART3_SetPose(float heading_deg, float x_mm, float y_mm);
-
+void Print_Ops9_t();
 /* ============================================================
  * LocatorDev_t 实例（抽象设备层契约，CLAUDE.md 第 4 节 / 7.1 节）
  *
