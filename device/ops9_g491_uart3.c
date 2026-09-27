@@ -1,32 +1,14 @@
 #include "ops9_g491_uart3.h"
-#include "usart.h"
-
-#include <stdio.h>
 #include <string.h>
 #include "usart.h"   /* CubeMX 生成的 huart3 句柄，供 locator_ops9.init() 挂接 */
 static UART_HandleTypeDef *s_huart = NULL;
 
 static ops9_t s_ops9;
-uint8_t Ops_payload[OPS9_FRAME_SIZE];
-static uint8_t s_rx_byte;
+static uint8_t s_dma_rx_buf[64];
 static volatile uint8_t s_new_data = 0;
-extern UART_HandleTypeDef huart2;
-
-void Print_Ops9_t() {
-    if (s_new_data != 0u && s_ops9.valid_frames != 0u)
-    {
-        uint8_t cmd[2]={0x0d,0x0a};
-        uint8_t cmd1[2]={0x0a,0x0d};
-
-        HAL_UART_Transmit(&huart2,cmd, 2, 1000);
-        HAL_UART_Transmit(&huart2, s_ops9.payload, 24, 1000);
-        HAL_UART_Transmit(&huart2,cmd1, 2, 1000);
-        s_new_data = 0u;
-    }
 
 
 
-}
 
 static float ops9_float_from_le(const uint8_t b[4])
 {
@@ -67,6 +49,16 @@ static void ops9_decode_payload(ops9_t *ctx)
         ctx->frame_cb(&ctx->latest, ctx->frame_cb_user);
 }
 
+void ops9_init(ops9_t *ctx, ops9_frame_callback_t frame_cb, void *user)
+{
+    if (ctx == NULL)
+        return;
+
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->state = OPS9_RX_WAIT_HEAD_0D;
+    ctx->frame_cb = frame_cb;
+    ctx->frame_cb_user = user;
+}
 
 
 /*
@@ -147,6 +139,14 @@ void ops9_input(ops9_t *ctx, const uint8_t *data, size_t len)
         ops9_input_byte(ctx, data[i]);
 }
 
+uint8_t ops9_get_latest(const ops9_t *ctx, ops9_data_t *out)
+{
+    if (ctx == NULL || out == NULL || ctx->valid_frames == 0)
+        return 0;
+
+    *out = ctx->latest;
+    return 1;
+}
 
 static uint8_t send4(ops9_tx_callback_t tx, void *user, const char cmd[4])
 {
@@ -215,27 +215,39 @@ static uint8_t ops9_hal_tx(const uint8_t *data, size_t len, void *user)
                              (uint16_t)len, 100u) == HAL_OK) ? 0 : 1;
 }
 
-void ops9_init(ops9_t *ctx, void *user)
+static void ops9_on_frame(const ops9_data_t *data, void *user)
 {
-    if (ctx == NULL)
-        return;
+    (void)data;
+    (void)user;
 
-    memset(ctx, 0, sizeof(*ctx));
-
-    HAL_UARTEx_ReceiveToIdle_DMA(
-    &huart3,Ops_payload,sizeof(Ops_payload)
-);
-    ctx->state = OPS9_RX_WAIT_HEAD_0D;
-    ctx->frame_cb_user = user;
+    /* 只置标志，避免在串口中断上下文中做耗时工作。 */
+    s_new_data = 1u;
 }
 
-
-static HAL_StatusTypeDef start_rx_it(void)
+static HAL_StatusTypeDef start_rx_dma(void)
 {
+    HAL_StatusTypeDef st;
+
     if (s_huart == NULL)
         return HAL_ERROR;
 
-    return HAL_UART_Receive_IT(s_huart, &s_rx_byte, 1u);
+    /* ORE/FE/NE 未清时重挂会立刻再报错（同 hardware/bus/uart2_tbop10.c 的先例） */
+    __HAL_UART_CLEAR_FLAG(s_huart, UART_CLEAR_OREF | UART_CLEAR_FEF | UART_CLEAR_NEF);
+
+    /* 用 DMA-IDLE 而非定长 Receive_DMA：OPS9 一帧 OPS9_FRAME_SIZE = 28 字节，
+     * 定长接收要凑满整个缓冲（64B）才回调，尾部那点数据会一直压在缓冲里不被
+     * 处理；流一停就彻底卡住。IDLE 一到就回调，变长帧才对得上。 */
+    st = HAL_UARTEx_ReceiveToIdle_DMA(s_huart, s_dma_rx_buf,
+                                      (uint16_t)sizeof(s_dma_rx_buf));
+    if (st != HAL_OK)
+        return st;
+
+    /* ReceiveToIdle_DMA 内部走 HAL_DMA_Start_IT，会把半传输(HT)中断一并打开；
+     * 缓冲收到一半时 UART_DMARxHalfCplt 同样触发 RxEvent，会把一次接收切成
+     * 两截。本驱动按「总线 IDLE + 收满」两种事件处理，不需要 HT。 */
+    __HAL_DMA_DISABLE_IT(&hdma_usart3_rx, DMA_IT_HT);
+
+    return HAL_OK;
 }
 
 HAL_StatusTypeDef OPS9_G491_UART3_Attach(UART_HandleTypeDef *huart)
@@ -244,41 +256,33 @@ HAL_StatusTypeDef OPS9_G491_UART3_Attach(UART_HandleTypeDef *huart)
         return HAL_ERROR;
 
     s_huart = huart;
-    ops9_init(&s_ops9, NULL);
+    ops9_init(&s_ops9, ops9_on_frame, NULL);
     s_new_data = 0u;
 
     /*
      * 防止之前存在未清状态导致第一次接收失败。
      * HAL UART 错误标志在 IRQ 中会继续处理；这里直接启动即可。
      */
-    return start_rx_it();
+    return start_rx_dma();
 }
 
 
-
-void OPS9_G491_UART3_EventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
-
-
-    if (Size == 28) {
-    s_ops9.valid_frames=1;
-}
-    HAL_UARTEx_ReceiveToIdle_DMA(
-    &huart3,Ops_payload,sizeof(Ops_payload)
-);
-
+UART_HandleTypeDef *OPS9_G491_UART3_GetHandle(void)
+{
+    return s_huart;
 }
 
 
-
-void OPS9_G491_UART3_RxCpltCallback(UART_HandleTypeDef *huart)
+void OPS9_G491_UART3_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size)
 {
     if (s_huart == NULL || huart != s_huart)
         return;
 
-    ops9_input_byte(&s_ops9, s_rx_byte);
+    ops9_input(&s_ops9, s_dma_rx_buf, Size);
 
-    /* 连续接收下一个字节 */
-    (void)start_rx_it();
+    /* 重挂接收，等下一批。Size 是本次已收到的字节数，帧被跨回调切分不影响
+     * 解析 —— ops9_input 喂的是状态机，状态跨调用保持。 */
+    (void)start_rx_dma();
 }
 
 void OPS9_G491_UART3_ErrorCallback(UART_HandleTypeDef *huart)
@@ -287,16 +291,16 @@ void OPS9_G491_UART3_ErrorCallback(UART_HandleTypeDef *huart)
         return;
 
     /*
-     * HAL 在 ORE / FE / NE 等错误后可能停止当前 IT 接收。
-     * 先终止接收，再重新启动。
+     * HAL 在 ORE / FE / NE 等错误后可能停止当前 DMA 接收（RxState 不再回到
+     * READY）。先终止本次接收把状态复位，再重新挂上。
      */
     (void)HAL_UART_AbortReceive(huart);
-    (void)start_rx_it();
+    (void)start_rx_dma();
 }
 
 uint8_t OPS9_G491_UART3_GetLatest(ops9_data_t *out)
 {
-
+    uint32_t primask;
     uint8_t  has_data = 0;
 
     if (out == NULL || s_huart == NULL)
@@ -306,19 +310,18 @@ uint8_t OPS9_G491_UART3_GetLatest(ops9_data_t *out)
      * s_ops9.latest 在 USART3 中断里更新。
      * 复制 24 字节结构体时短暂屏蔽中断，防止读到半帧新、半帧旧的数据。
      */
+    primask = __get_PRIMASK();
+    __disable_irq();
 
-
-    if (s_ops9.valid_frames != 0u)
+    if (s_new_data != 0u && s_ops9.valid_frames != 0u)
     {
-        ops9_input(&s_ops9,Ops_payload , 28);
         *out = s_ops9.latest;
         s_new_data = 0u;
         has_data = 1;
-        s_ops9.valid_frames=0;
     }
 
-
-
+    if (primask == 0u)
+        __enable_irq();
 
     return has_data;
 }
@@ -462,9 +465,13 @@ static void ops9_loc_update(void)
         s_pose.wz    = raw.heading_rate_dps * OPS9_DEG2RAD;
 
         s_pose.valid      = 1U;
-
+        s_pose.timestamp  = HAL_GetTick();
+        s_last_frame_tick = s_pose.timestamp;
+    } else if ((s_pose.valid != 0U) && (s_last_frame_tick != 0U) &&
+               (HAL_GetTick() - s_last_frame_tick > OPS9_FRAME_TIMEOUT_MS)) {
+        /* 帧流中断：判离线，位姿冻结并标记不可信 */
+        s_pose.valid = 0U;
     }
-
 }
 
 /**

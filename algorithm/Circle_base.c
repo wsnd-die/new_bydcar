@@ -8,7 +8,7 @@
 #include "Circle_base.h"
 #include "mecanum.h"
 #include "Send_motor.h"
-#include "k230.h"
+#include "NX_uart.h"
 /* ======================== 全局状态 ======================== */
 
 float g_circle_vx = 0.0f;

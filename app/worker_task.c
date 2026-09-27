@@ -14,7 +14,7 @@
 #include "banyuntask.h"
 #include "worker_task.h"
 
-#include "../uart/NX_uart4.h"
+#include "../uart/NX_uart.h"
 
 /* ==================================================================
  * 一、FC_TASK 与 NavigationMecanum 之间的契约量

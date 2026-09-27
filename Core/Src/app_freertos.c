@@ -31,6 +31,7 @@
 #include "emm_5v.h"
 #include "ops9_g491_uart3.h"
 #include "servo_scs.h"
+#include "NX_uart.h"
 #include "worker_task.h"
 /* USER CODE END Includes */
 
@@ -75,10 +76,11 @@
  *          目标位置停在那里时，手推几度就会让读数从一端跳到另一端，位置环把
  *          误差算成「差一整圈」，于是顺着你推的方向转满一圈才回来。
  *          取 0 / 2 / 4095 这类值，即使字节序修好了，该现象**依然会出现**。 */
-#define STS_CENTER     2048    /* STS3032: 0~4095 的中位 */
+#define STS_CENTER     3330    /* STS3032: 0~4095 的中位 */
 #define STS_SPEED       0    /* 原始寄存器值，单位见 STS3032 数据手册 */
 #define STS_ACC         0      /* 原始寄存器值，0 = 不控加速度直冲最高速 */
-#define SCS_CENTER     450     /* SCS0009: 0~1024 的中位（0.293°/步，全行程 300°） */
+#define SCS_CLOSE     450     /* SCS0009: 0~1024 的中位（0.293°/步，全行程 300°） */
+#define SCS_OPEN      620
 #define SCS_SPEED       0    /* 原始寄存器值，0 = 用寄存器内部值 */
 #define SCS_TIME        0       /* 0 = 用寄存器内部值 */
 
@@ -319,7 +321,7 @@ void gripper_task(void *argument)
 
   servo_set_pos(SERVO_ID_STS3032, STS_CENTER);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
-    servo_set_pos(id, SCS_CENTER);
+    servo_set_pos(id, SCS_OPEN);
   }
 
 
@@ -356,6 +358,7 @@ void gripper_task(void *argument)
 void FC_TASK(void *argument)
 {
   /* USER CODE BEGIN FC_TASK */
+  NX_Init();
   /* Infinite loop */
   for(;;)
   {
