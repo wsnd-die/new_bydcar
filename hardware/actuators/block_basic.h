@@ -6,8 +6,10 @@
  * @copyright Copyright (c) 2026
  * @note 物块机构的丝杆升降和双机械臂升降分别对应两台车的情况
  *       1. 丝杆车型：把目标升高高度换算成 5 号 EMM 步进电机位置模式脉冲。
- *       2. 双机械臂车型：把目标升高高度换算成 CH2/CH3 两个舵机角度。
- *       3. 转盘机构：把 1~5 号物块位置换算成 CH1 的 360 度舵机角度。
+ *       2. 双机械臂车型：把目标升高高度换算成 CH1/CH3 两个舵机角度。
+ *       3. 转盘机构：把 1~5 号物块位置换算成 UART5 总线上 STS3032 的
+ *          绝对位置（0~4095 ↔ 0~360°），走 SCS_WritePosEx()。V1.16.0 起
+ *          不再占用任何 TIM 通道 —— 原先的 TIM3_CH2 PWM 路径已删除。
  */
 #ifndef BLOCK_BASIC_H
 #define BLOCK_BASIC_H
@@ -31,6 +33,24 @@ extern "C" {
 
 #define BLOCK_SERVO_DEG              360.0f
 
+/* ================================================================
+ * 转盘舵机：飞特 STS3032 总线舵机（UART5，SMS_STS 系列）
+ *
+ * V1.16.0 起转盘由 TIM3_CH2 的 PWM 舵机改为总线舵机，位置写走
+ * SCS_WritePosEx()（见 servo_scs.h），不再占用任何 TIM 通道。
+ *
+ * 与 UART5 上 ID2~6 的 SCS0009 分属两个相反的字节序系列：
+ * SCS_WritePosEx() 会自己在锁内把总线字节序切成小端，调用方不必管。
+ * ================================================================ */
+/** 总线上的舵机 ID。与 Core/Src/app_freertos.c 的 SERVO_ID_STS3032 是同一颗。 */
+#define BLOCK_TURNTABLE_SERVO_ID         1u
+/** 位置量程上限：12 位单圈绝对值，0~4095 对应 0~360°（中位 2048）。 */
+#define BLOCK_TURNTABLE_SERVO_POS_MAX    4095u
+/** 运行速度，原始寄存器值；0 = 用寄存器内部值。 */
+#define BLOCK_TURNTABLE_SERVO_SPEED      0u
+/** 加速度，原始寄存器值 0~254；0 = 不控加速度直冲最高速。 */
+#define BLOCK_TURNTABLE_SERVO_ACC        0u
+
 #if BLOCK_USE_DUAL_ARM
 /* 双机械臂参数：CH1 为前级舵机（舵机1），CH3 为后级舵机（舵机2）。 */
 #define BLOCK_ARM_MIN_HEIGHT_MM          0.0f
@@ -45,11 +65,11 @@ extern "C" {
 /* 转盘位置编号从 1 开始，合法范围为 1~5。 */
 #define BLOCK_TURNTABLE_FIRST_POS        1u
 #define BLOCK_TURNTABLE_POS_COUNT        5u
-#define BLOCK_TURNTABLE_HOME_DEG         0.1f
-#define BLOCK_TURNTABLE_STEP_DEG         (BLOCK_SERVO_DEG / BLOCK_TURNTABLE_POS_COUNT-0.01)
+#define BLOCK_TURNTABLE_HOME_DEG         0.0f
+#define BLOCK_TURNTABLE_STEP_DEG         (BLOCK_SERVO_DEG / BLOCK_TURNTABLE_POS_COUNT)
 /* 单次最大角度步长。分段移动用于降低 360 度位置舵机自动走最短路径的风险。 */
 #define BLOCK_TURNTABLE_STEP_LIMIT_DEG   72.0f
-#define BLOCK_TURNTABLE_STEP_DELAY_MS    80u
+#define BLOCK_TURNTABLE_STEP_DELAY_MS    10u
 
 #define x_limit 0.003f
 #define y_limit 0.003f
@@ -103,8 +123,12 @@ void BlockBasic_DualArmSetPos(uint8_t pos);
  * @param  block_pos  物块位置编号，合法范围为 1~5。
  * @retval BLOCK_OK / BLOCK_ERR_PARAM
  *
- * @note   CH1 按 360 度位置型舵机处理。若实际是连续旋转速度型 360 舵机，
+ * @note   转盘按 UART5 总线上的 STS3032 绝对位置舵机处理（V1.16.0 起），
+ *         位置量程 0~4095 对应 0~360°。若换成连续旋转速度型舵机，
  *         本接口只能作为框架，不能保证绝对角度定位。
+ * @warning 本函数据此**阻塞**在总线收发上（厂商协议为发一帧收一帧），
+ *          舵机不在线时每字节最多等 SCS_UART_RX_TIMEOUT_MS。只应在低频
+ *          命令任务里调用，不要放进控制环。
  */
 BlockStatus BlockBasic_TurntableTo(uint8_t block_pos);
 

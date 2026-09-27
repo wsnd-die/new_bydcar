@@ -32,6 +32,7 @@
 #include "ops9_g491_uart3.h"
 #include "servo_scs.h"
 #include "NX_uart.h"
+#include "block_basic.h"
 #include "worker_task.h"
 /* USER CODE END Includes */
 
@@ -43,40 +44,12 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-/* ── 总线上的 6 个舵机 (UART5) ────────────────────────────────────────
- * @note 这几个 #define 必须放在 USER CODE 区里 —— 放到 gripper_task 上方那一段
- *       (USER CODE END Header_gripper_task 与函数签名之间) 属于生成区，
- *       CubeMX 重新生成会**静默删掉**。
- *
- * @warning **ID 1 与 ID 2~6 属于两个不同的系列，必须用两套不同的 API 驱动。**
- *          这不是代码风格问题，是寄存器布局问题：
- *
- *          ID 1  STS3032  → SMS_STS 系列
- *              起始地址 41(ACC)，一次写 7 字节 [ACC|位置|时间|速度]
- *              位置量程 **0~4095** 对应 0~360°，中位 **2048**
- *              → `SCS_WritePosEx(id, pos, speed, acc)`
- *
- *          ID 2~6 SCS0009 → SCSCL 系列（厂商型号表 `5,4,4,1,SCS009`）
- *              起始地址 42(GOAL_POSITION)，一次写 6 字节 [位置|时间|速度]
- *              位置量程 **0~1000** 对应 0~300°，中位 **500**
- *              → `SCS_WritePos(id, pos, time, speed)`
- *
- *          把 SCS0009 交给 `SCS_WritePosEx()` 的后果：ACC 字节会落到 SCSCL 未
- *          定义的 41 号地址上，位置还会超出 0~1000 的量程。**不会报错，只是不动。**
- *          详见 servo_scs.h 各自接口的 @note。 */
+
 #define SERVO_ID_STS3032      1      /* STS3032, SMS_STS 系列 */
 #define SERVO_ID_SCS0009_MIN  2      /* SCS0009, SCSCL 系列 */
 #define SERVO_ID_SCS0009_MAX  6
 
-
-/* 两套量程各自的参数。中位与速度单位都不是同一套，别互相抄。
- *
- * @warning **这两个 CENTER 必须取各自量程的中段，绝不能贴住量程两端。**
- *          位置寄存器是单圈绝对值 —— 0 与量程上限在物理上是**相邻的同一个点**。
- *          目标位置停在那里时，手推几度就会让读数从一端跳到另一端，位置环把
- *          误差算成「差一整圈」，于是顺着你推的方向转满一圈才回来。
- *          取 0 / 2 / 4095 这类值，即使字节序修好了，该现象**依然会出现**。 */
-#define STS_CENTER     3330    /* STS3032: 0~4095 的中位 */
+#define STS_CENTER     0    /* STS3032: 0~4095 的中位（当前无调用者） */
 #define STS_SPEED       0    /* 原始寄存器值，单位见 STS3032 数据手册 */
 #define STS_ACC         0      /* 原始寄存器值，0 = 不控加速度直冲最高速 */
 #define SCS_CLOSE     450     /* SCS0009: 0~1024 的中位（0.293°/步，全行程 300°） */
@@ -133,7 +106,7 @@ osThreadId_t ops9imu_taskHandle;
 const osThreadAttr_t ops9imu_task_attributes = {
   .name = "ops9imu_task",
   .priority = (osPriority_t) osPriorityHigh,
-  .stack_size = 256 * 4
+  .stack_size = 256 * 6
 };
 /* Definitions for gripper */
 osThreadId_t gripperHandle;
@@ -259,17 +232,17 @@ void StartDefaultTask(void *argument)
   /* USER CODE BEGIN StartDefaultTask */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
 
-  // Emm_V5_En_Control(1,1,0);
-  // Emm_V5_En_Control(2,1,0);
-  // Emm_V5_En_Control(3,1,0);
-  // Emm_V5_En_Control(4,1,0);
-  //
+  Emm_V5_En_Control(1,1,0);
+  Emm_V5_En_Control(2,1,0);
+  Emm_V5_En_Control(3,1,0);
+  Emm_V5_En_Control(4,1,0);
   // osDelay(100);
   // Emm_V5_Vel_Control(1, 0, 50, 0, 0);
   // Emm_V5_Vel_Control(2, 0, 50, 0, 0);
   // Emm_V5_Vel_Control(3, 1, 50, 0, 0);
   // Emm_V5_Vel_Control(4, 1, 50, 0, 0);
-
+  // BlockBasic_LiftTo(UP,20);
+  Emm_V5_Pos_Control(5, 1, 800, 255, 32000, 0, 0);
   /* ── 调度器 ──────────────────────────────────────────────────────────
    * 架构: 驱动源 → defaultTask 调度器 → Worker 任务。
    * 本任务只负责从系统事件队列取 Mode 并转交 NLF_TASK, 不再碰 IMU ——
@@ -334,9 +307,9 @@ void gripper_task(void *argument)
     printf("[scs] bus init FAIL: huart5 not initialized\r\n");
     for (;;) { osDelay(100); }
   }
-  // printf("[scs] bus init SUCSESS: huart5 initialized\r\n");
+  printf("[scs] bus init SUCSESS: huart5 initialized\r\n");
+  Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
 
-  servo_set_pos(SERVO_ID_STS3032, STS_CENTER);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
   }
@@ -344,22 +317,7 @@ void gripper_task(void *argument)
 
   for (;;)
   {
-    /* ── 在这里写你的舵机控制逻辑 ────────────────────────────────────
-     * 用 servo_set_pos() 就行，它会按 ID 自动分派到正确的系列上：
-     *
-     *     servo_set_pos(1, 1000);   // STS3032 → 量程 0~4095
-     *     servo_set_pos(3, 700);    // SCS0009 → 量程 0~1000
-     *
-     * 需要分别控制速度/时间/加速度时，直接调底层接口（注意量程与单位不同）：
-     *
-     *     SCS_WritePosEx(1, pos, speed, acc);   // 仅 STS3032
-     *     SCS_WritePos(2, pos, time, speed);    // 仅 SCS0009
-     *
-     * 回读用 FeedBack 一次取全，再 ReadXxx(-1) 从缓冲区拿，不额外占总线：
-     *
-     *     SCS_FeedBack(1);
-     *     if (SCS_GetLastError() == 0) { int p = SCS_ReadPos(-1); }
-     */
+
     osDelay(20);
   }
   /* USER CODE END gripper_task */

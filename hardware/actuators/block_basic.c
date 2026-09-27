@@ -7,6 +7,7 @@
 #include "block_basic.h"
 #include "emm_5v.h"
 #include "Mecanum_Move.h"
+#include "servo_scs.h"      /* 转盘 STS3032 总线舵机: SCS_WritePosEx (V1.16.0) */
 #define CLAMP_FLOAT(v, lo, hi)  ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define DEG2RAD(d)              ((d) * 0.01745329252f)
 #define RAD2DEG(r)              ((r) * 57.2957795131f)
@@ -32,23 +33,6 @@ static const BlockDualArmPos block_dual_arm_pos_table[] = {
 #define BLOCK_DUAL_ARM_POS_COUNT \
     ((uint8_t)(sizeof(block_dual_arm_pos_table) / sizeof(block_dual_arm_pos_table[0])))
 #endif
-
-/**
- * @brief   物块舵机角度写入,把角度转换成 TIM3 PWM 比较值。
- * @param   channel         TIM3 通道号，CH1/CH2/CH3。
- * @param   angle_deg       目标角度，单位 deg。
- * @param   full_angle_deg  舵机最大角度，180 或 360
- *          TIM_CHANNEL_1 -> 双舵机前级 CH1
- *          TIM_CHANNEL_2 -> 转盘舵机 CH2
- *          TIM_CHANNEL_3 -> 双舵机后级 CH3
- */
-static void block_servo_write(uint32_t channel, float angle_deg)
-{
-    float angle = CLAMP_FLOAT(angle_deg, 0.0f , BLOCK_SERVO_DEG);
-    float pulse = 500.0f + (angle / BLOCK_SERVO_DEG) * (2500.0f - 500.0f);
-
-    __HAL_TIM_SET_COMPARE(&htim3, channel, (uint32_t)(pulse + 0.5f));
-}
 
 /**
  * @brief   将任意角度归一化到 [0, 360)。
@@ -80,13 +64,42 @@ static float turntable_target_angle(uint8_t block_pos)
 }
 
 /**
- * @brief   转盘角度写入。
- * @param   angle_deg   目标角度，单位 deg。
- * @note    360 度位置舵机，CH2。
+ * @brief   转盘角度写入 —— UART5 总线上的 STS3032 绝对位置舵机。
+ * @param   angle_deg   目标角度，单位 deg；先归一化到 [0, 360)。
+ *
+ * @note    V1.16.0 起转盘不再走 TIM3_CH2 的 PWM：原 `block_servo_write()`
+ *          已删除（本函数是它在工程里唯一的调用者），改用 SCS_WritePosEx()。
+ *          角度 → 位置：pos = 角度 / 360 × 4095，即 12 位单圈绝对值
+ *          0~4095 ↔ 0~360°。HOME = 0.1° → pos ≈ 1。
+ *
+ * @warning **量程端点 0 与 4095 在物理上是同一个点。** HOME 落在 pos≈1，
+ *          正好贴在跳变点上：手推几度就可能让读数跨端跳变，位置环会把误差
+ *          算成「差一整圈」，于是顺着推的方向转满一圈才回来。这是
+ *          Core/Src/app_freertos.c 里记录过的同一个坑（SDK 的 STS_CENTER
+ *          注释）。本次按要求**未加相位偏移**；若实测出现整圈反转，
+ *          加一个 180° 的相位偏移把 HOME 挪到量程中段即可。
+ *
+ * @note    本函数**阻塞**在总线收发上（厂商协议发一帧收一帧，见
+ *          servo_scs.h）。舵机不在线时每字节最多等 SCS_UART_RX_TIMEOUT_MS，
+ *          单条命令的总代价可能到百毫秒级 —— 只应在低频命令任务里调用。
+ *          调用任务需要 ≥1KB 栈余量（servo_scs.h 的栈要求说明）。
+ * @note    总线未初始化（SCS_BusInit() 未跑）时 SCS_WritePosEx() 仍会发帧，
+ *          只是没有互斥保护，不会静默丢弃。
  */
 static void turntable_write_angle(float angle_deg)
 {
-    block_servo_write(TIM_CHANNEL_2, normalize_servo(angle_deg));
+    float    angle = normalize_servo(angle_deg);
+    uint16_t pos   = (uint16_t)(angle / BLOCK_SERVO_DEG *
+                                (float)BLOCK_TURNTABLE_SERVO_POS_MAX + 0.5f);
+
+    if (pos > (uint16_t)BLOCK_TURNTABLE_SERVO_POS_MAX) {
+        pos = (uint16_t)BLOCK_TURNTABLE_SERVO_POS_MAX;
+    }
+
+    (void)SCS_WritePosEx((uint8_t)BLOCK_TURNTABLE_SERVO_ID,
+                         (int16_t)pos,
+                         BLOCK_TURNTABLE_SERVO_SPEED,
+                         BLOCK_TURNTABLE_SERVO_ACC);
 }
 
 /**
