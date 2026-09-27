@@ -6,7 +6,7 @@
 #include "Common_used.h"
 #include "block_basic.h"
 #include "emm_5v.h"
-#include "Mecanum_Move.h"
+#include "NavigationMecanum.h"
 #include "servo_scs.h"      /* 转盘 STS3032 总线舵机: SCS_WritePosEx (V1.16.0) */
 #define CLAMP_FLOAT(v, lo, hi)  ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define DEG2RAD(d)              ((d) * 0.01745329252f)
@@ -225,26 +225,26 @@ BlockStatus BlockBasic_TurntableTo(uint8_t block_pos)
     turntable_write_angle(angle_servo);
     return BLOCK_OK;
 }
-
-MecanumConfig_t Place_config = {
-    .wheel_radius_m = 0.0375f,
-    .half_length_m = 0.088f,
-    .half_width_m = 0.0782f,
-    .gear_ratio = 1.0f,
-    .pulse_per_rev =3200 ,
-    .max_motor_rpm = 140,
-    .min_move_time_s = 0.1f,
-
-    /* 驱动器逻辑方向: 0=正向(与 Send_motor 速度环 !dir 后一致)
-     * 原 RL/RR 误设 1, 导致 Place 位置模式下后轮反转, 车打转 */
-    .forward_dir[MECANUM_ADDR_FR] = 0U,
-    .forward_dir[MECANUM_ADDR_RL] = 1U,
-    .forward_dir[MECANUM_ADDR_FL] = 0U,
-    .forward_dir[MECANUM_ADDR_RR] = 1U,
-
-    /* 驱动器加速度: 脉冲/秒^2 */
-    .acceleration = 100U
-};
+//
+// MecanumConfig_t Place_config = {
+//     .wheel_radius_m = 0.0375f,
+//     .half_length_m = 0.088f,
+//     .half_width_m = 0.0782f,
+//     .gear_ratio = 1.0f,
+//     .pulse_per_rev =3200 ,
+//     .max_motor_rpm = 140,
+//     .min_move_time_s = 0.1f,
+//
+//     /* 驱动器逻辑方向: 0=正向(与 Send_motor 速度环 !dir 后一致)
+//      * 原 RL/RR 误设 1, 导致 Place 位置模式下后轮反转, 车打转 */
+//     .forward_dir[MECANUM_ADDR_FR] = 0U,
+//     .forward_dir[MECANUM_ADDR_RL] = 1U,
+//     .forward_dir[MECANUM_ADDR_FL] = 0U,
+//     .forward_dir[MECANUM_ADDR_RR] = 1U,
+//
+//     /* 驱动器加速度: 脉冲/秒^2 */
+//     .acceleration = 100U
+// };
 /**
  * @brief  重置软件记录的转盘当前角度，并立即输出该角度 PWM。
  * @param  angle_deg  当前机械角度，单位 deg；会归一化到 0~360。
@@ -267,25 +267,27 @@ void Servo_SetAngle(float Angle)
 
 void Place(char dir,float x,float y,uint16_t height)
 {
-    MecanumMove_t move;
+   // MecanumMove_t move;
     if (dir == 'O')
     {
         /* 圆心 xy → 放置补量 (保留) */
         float fwd  = 0.068f - y * PLACE_CIRCLE_SCALE_M;
         float left = -x * PLACE_CIRCLE_SCALE_M;
-        if (Mecanum_CalculateMove(&Place_config, fwd, left, 0.0f, &move))
-        {
-            Mecanum_ExecuteMove(&Place_config, &move);
-            osDelay((uint32_t)(move.duration_s * 2000.0f) + 50U);
-        }
+        // if (Mecanum_CalculateMove(&Place_config, fwd, left, 0.0f, &move))
+        // {
+        //     Mecanum_ExecuteMove(&Place_config, &move);
+        //     osDelay((uint32_t)(move.duration_s * 2000.0f) + 50U);
+        // }
+        Nav_MoveBody(fwd,  left, 0 ) ;
         BlockBasic_LiftTo(DOWN,height);
         osDelay(950);
 
         /* 后退 0.05 m（车体坐标：-X 为后退） */
-        if (Mecanum_CalculateMove(&Place_config, -0.145f, 0.0f, 0.0f, &move))
-        {
-            Mecanum_ExecuteMove(&Place_config, &move);
-            osDelay((uint32_t)(move.duration_s * 2000.0f) + 50U);
-        }
+        // if (Mecanum_CalculateMove(&Place_config, -0.145f, 0.0f, 0.0f, &move))
+        // {
+        //     Mecanum_ExecuteMove(&Place_config, &move);
+        //     osDelay((uint32_t)(move.duration_s * 2000.0f) + 50U);
+        // }
+        Nav_MoveBody(-0.05,  0, 0 ) ;
     }
 }

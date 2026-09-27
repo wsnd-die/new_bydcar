@@ -32,6 +32,7 @@
 #include "ops9_g491_uart3.h"
 #include "servo_scs.h"
 #include "NX_uart.h"
+#include "block_basic.h"
 #include "worker_task.h"
 /* USER CODE END Includes */
 
@@ -362,6 +363,21 @@ void NLF_TASK(void *argument)
     osDelay(1);
   }
   /* USER CODE END NLF_TASK */
+}
+
+/* USER CODE BEGIN Header_AC_Task */
+/**
+* @brief Function implementing the AC_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_AC_Task */
+void AC_Fuction(void *argument)
+{
+  /* USER CODE BEGIN AC_Task */
+  (void)argument;      /* 签名对齐 osThreadFunc_t; 实际主体在 worker_task.c */
+  Angle_Fuction();     /* IMU 轮询 + 角度环, 永不返回 */
+  /* USER CODE END AC_Task */
 }
 
 /* Private application code --------------------------------------------------*/

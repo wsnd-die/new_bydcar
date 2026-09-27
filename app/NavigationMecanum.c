@@ -40,7 +40,7 @@ uint8_t     g_waypoint_count = 0;
 /* ==================================================================
  * 静态工具
  * ================================================================== */
-
+#define MECANUM_PI   3.141592653589793f
 /** @brief 角度归一化到 [-π, π] */
 static float NAV_WrapPi(float a)
 {
@@ -191,3 +191,16 @@ bool Nav_RunWaypoints(void)
     }
     return true;
 }
+
+bool Nav_MoveBody(float target_x, float target_y, float target_yaw) {
+
+    float targetworld_x=target_x+Self_Dir.x,
+    targetworld_y=target_y+Self_Dir.y,
+    targetworld_yaw=target_yaw+Self_Dir.yaw;
+
+    Nav_GoToWorld(targetworld_x ,targetworld_y  , targetworld_yaw );
+
+
+}
+
+

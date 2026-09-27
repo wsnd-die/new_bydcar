@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "Mecanum_Move.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,6 +87,8 @@ void Chassis_WorldMoveTest(void);
  */
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
 bool Nav_FeDuanPoint(void);
+
+bool Nav_MoveBody(float target_x, float target_y, float target_yaw) ;
 
 /**
  * @brief 循迹完成后按实测位置校准 a 点 / 亚军点
