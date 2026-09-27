@@ -89,7 +89,7 @@ void Angle_Fuction(void)
 
         float yaw   = RAD2DEG(pose.yaw);
         float w_deg = RAD2DEG(pose.wz);
-
+        // printf("%f,%f\r\n",yaw,w_deg);
         if (g_angle_ctrl_enable)
         {
             if (!was_on) {
@@ -115,6 +115,7 @@ void Angle_Fuction(void)
              * cmd_w 单位 rad/s, 与 Mecanum_Calc 的 w 同量纲。 */
             MecanumResult cmd = Mecanum_Calc(g_angle_ctrl_speed,
                                              s_fc.cmd_w + g_angle_ctrl_w_ff);
+
             Send_commandmotor(&cmd);
         }
         else if (was_on)

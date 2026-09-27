@@ -1122,6 +1122,9 @@
         <file>
           <name>$PROJ_DIR$/../Core/Src/stm32g4xx_hal_msp.c</name>
         </file>
+        <file>
+          <name>$PROJ_DIR$/../Core/Src/stm32g4xx_hal_timebase_tim.c</name>
+        </file>
       </group>
     </group>
   </group>
@@ -1129,6 +1132,12 @@
     <name>Drivers</name>
     <group>
       <name>STM32G4xx_HAL_Driver</name>
+      <file>
+        <name>$PROJ_DIR$/../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_tim.c</name>
+      </file>
+      <file>
+        <name>$PROJ_DIR$/../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_tim_ex.c</name>
+      </file>
       <file>
         <name>$PROJ_DIR$/../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_fdcan.c</name>
       </file>
@@ -1182,12 +1191,6 @@
       </file>
       <file>
         <name>$PROJ_DIR$/../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_spi_ex.c</name>
-      </file>
-      <file>
-        <name>$PROJ_DIR$/../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_tim.c</name>
-      </file>
-      <file>
-        <name>$PROJ_DIR$/../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_tim_ex.c</name>
       </file>
       <file>
         <name>$PROJ_DIR$/../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_uart.c</name>

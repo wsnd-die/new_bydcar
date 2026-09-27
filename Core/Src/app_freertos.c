@@ -156,6 +156,13 @@ const osThreadAttr_t nav_task_attributes = {
   .priority = (osPriority_t) osPriorityHigh,
   .stack_size = 256 * 4
 };
+/* Definitions for AC_Task */
+osThreadId_t AC_TaskHandle;
+const osThreadAttr_t AC_Task_attributes = {
+  .name = "AC_Task",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 256 * 4
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -169,6 +176,7 @@ void ops9imu_fuction(void *argument);
 void gripper_task(void *argument);
 void FC_TASK(void *argument);
 void NLF_TASK(void *argument);
+void AC_Fuction(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -227,6 +235,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of nav_task */
   nav_taskHandle = osThreadNew(NLF_TASK, NULL, &nav_task_attributes);
 
+  /* creation of AC_Task */
+  AC_TaskHandle = osThreadNew(AC_Fuction, NULL, &AC_Task_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* USER CODE END RTOS_THREADS */
 
@@ -248,7 +259,16 @@ void StartDefaultTask(void *argument)
   /* USER CODE BEGIN StartDefaultTask */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
 
-
+  // Emm_V5_En_Control(1,1,0);
+  // Emm_V5_En_Control(2,1,0);
+  // Emm_V5_En_Control(3,1,0);
+  // Emm_V5_En_Control(4,1,0);
+  //
+  // osDelay(100);
+  // Emm_V5_Vel_Control(1, 0, 50, 0, 0);
+  // Emm_V5_Vel_Control(2, 0, 50, 0, 0);
+  // Emm_V5_Vel_Control(3, 1, 50, 0, 0);
+  // Emm_V5_Vel_Control(4, 1, 50, 0, 0);
 
   /* ── 调度器 ──────────────────────────────────────────────────────────
    * 架构: 驱动源 → defaultTask 调度器 → Worker 任务。
@@ -264,10 +284,6 @@ void StartDefaultTask(void *argument)
       NLF_Request(cmd.Mode);
     }
 
-    // Emm_V5_Vel_Control(1, 0, 0, 0, 0);
-    // Emm_V5_Vel_Control(2, 0, 0, 0, 0);
-    // Emm_V5_Vel_Control(3, 1, 0, 0, 0);
-    // Emm_V5_Vel_Control(4, 1, 0, 0, 0);
 
     osDelay(20);
   }
@@ -386,6 +402,25 @@ void NLF_TASK(void *argument)
     osDelay(1);
   }
   /* USER CODE END NLF_TASK */
+}
+
+/* USER CODE BEGIN Header_AC_Fuction */
+/**
+* @brief Function implementing the AC_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_AC_Fuction */
+void AC_Fuction(void *argument)
+{
+  /* USER CODE BEGIN AC_Fuction */
+  /* Infinite loop */
+  for(;;)
+  {
+    Angle_Fuction();
+    osDelay(1);
+  }
+  /* USER CODE END AC_Fuction */
 }
 
 /* Private application code --------------------------------------------------*/

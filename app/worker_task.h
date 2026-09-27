@@ -105,6 +105,9 @@ void FC_Fuction(void);
 /** @brief NLF_TASK 入口 (osThreadFunc_t 签名)。 */
 void NLF_Fuction(void);
 
+ /** @brief AC_TASK 入口 (osThreadFunc_t 签名)。 */
+ void Angle_Fuction(void);
+
 /**
  * @brief  请求 NLF_TASK 执行一个 Mode。由 defaultTask 调度器调用。
  * @param  mode  待执行的系统事件, 见 banyuntask.h 的 SystemMode_t。
