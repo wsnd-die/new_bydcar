@@ -329,6 +329,7 @@ active_locator->get_pose(&robot_pose);
 
 | 版本 | 日期 | 摘要 | 记录 |
 |---|---|---|---|
+| V1.16.0 | 2026-09-27 | 修改：转盘舵机由 TIM3_CH2 PWM 改为 UART5 上的 STS3032 总线舵机（`SCS_WritePosEx`）；删除 `block_servo_write()` | [2026-09-27](clauderecord/2026-09-27.md) |
 | V1.14.0 | 2026-09-26 | 删除：TBOP 里程计自动标定整块（死代码 + 跨层违规）；`Odometry_Apply_Calib` 剥离为单分支 | [2026-09-26](clauderecord/2026-09-26.md) |
 | V1.14.1 | 2026-09-26 | 修改：USART3(OPS9) 接收改 DMA+IDLE；`HAL_UARTEx_RxEventCallback` 收归 `usart.c` 做唯一分发器 | [2026-09-26](clauderecord/2026-09-26.md) |
 | V1.14.2 | 2026-09-26 | 修复：I2C3 改 DMA 读后未接通 I2C3_EV/ER 中断（传输永不完成）；补 NVIC + IRQHandler + 信号量完成同步 | [2026-09-26](clauderecord/2026-09-26.md) |
