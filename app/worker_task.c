@@ -186,12 +186,6 @@ void NLF_RunFlow(SystemMode_t mode)
             Arc_Abort();                /* = 关环 + 清线速度/前馈, 取代原来那句裸的置 0 */
             break;
 
-        /* ---- 循迹整体已移除 (V1.6.0) ----
-         * Event_LinFolL / Event_LinFolR 不再有执行体: algorithm/Trace_base.c
-         * 与 app/GrayTrace.c 已删除。枚举值保留在 banyuntask.h 里未动,
-         * 若将来换用别的循迹方案, 在这里接一个新分支即可。
-         */
-
         /* ---- 以下四个的执行体都已存在, 但入参来源未定, 故暂不接线 ----
          *
          *   Event_QRCode          → SetQR(idx)

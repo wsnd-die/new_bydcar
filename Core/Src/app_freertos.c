@@ -295,7 +295,7 @@ void ops9imu_fuction(void *argument)
     active_locator->update();
     active_locator->get_pose(&o_pose);
     // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
-    osDelay(6);
+    osDelay(10);
   }
   /* USER CODE END ops9imu_fuction */
 }
@@ -318,6 +318,7 @@ void gripper_task(void *argument)
     printf("[scs] bus init FAIL: huart5 not initialized\r\n");
     for (;;) { osDelay(100); }
   }
+  // printf("[scs] bus init SUCSESS: huart5 initialized\r\n");
 
   servo_set_pos(SERVO_ID_STS3032, STS_CENTER);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
@@ -363,7 +364,7 @@ void FC_TASK(void *argument)
   for(;;)
   {
     FC_Fuction();
-    osDelay(1);
+    osDelay(10);
   }
   /* USER CODE END FC_TASK */
 }
