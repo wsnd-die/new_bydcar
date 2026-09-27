@@ -34,6 +34,7 @@ TaskCommand_t task_recive()
     if (xQueueReceive(systemEventQueue, &receivedCmd,
                       portMAX_DELAY) == pdPASS)
     {
+
         return receivedCmd;
     }
 

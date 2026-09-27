@@ -152,6 +152,7 @@ MecanumResult Mecanum_Calc_Full_V(float vx, float vy, float w)
  *  Send_commandmotor(): 前右/前左的方向位取反是底盘装机的硬件约定,
  *  两处必须保持一致, 改动任何一边都要同步另一边。
  * ================================================================ */
+
 void Mecanum_Vel_Execute(const MecanumResult *res)
 {
     if (res == NULL)

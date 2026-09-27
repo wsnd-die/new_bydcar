@@ -32,6 +32,7 @@
 #include "ops9_g491_uart3.h"
 #include "servo_scs.h"
 #include "NX_uart.h"
+#include "block_basic.h"
 #include "worker_task.h"
 /* USER CODE END Includes */
 
@@ -156,13 +157,6 @@ const osThreadAttr_t nav_task_attributes = {
   .priority = (osPriority_t) osPriorityHigh,
   .stack_size = 256 * 4
 };
-/* Definitions for AC_Task */
-osThreadId_t AC_TaskHandle;
-const osThreadAttr_t AC_Task_attributes = {
-  .name = "AC_Task",
-  .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 256 * 4
-};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -176,7 +170,6 @@ void ops9imu_fuction(void *argument);
 void gripper_task(void *argument);
 void FC_TASK(void *argument);
 void NLF_TASK(void *argument);
-void AC_Fuction(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -235,9 +228,6 @@ void MX_FREERTOS_Init(void) {
   /* creation of nav_task */
   nav_taskHandle = osThreadNew(NLF_TASK, NULL, &nav_task_attributes);
 
-  /* creation of AC_Task */
-  AC_TaskHandle = osThreadNew(AC_Fuction, NULL, &AC_Task_attributes);
-
   /* USER CODE BEGIN RTOS_THREADS */
   /* USER CODE END RTOS_THREADS */
 
@@ -265,10 +255,10 @@ void StartDefaultTask(void *argument)
   // Emm_V5_En_Control(4,1,0);
   //
   // osDelay(100);
-  // Emm_V5_Vel_Control(1, 0, 50, 0, 0);
-  // Emm_V5_Vel_Control(2, 0, 50, 0, 0);
-  // Emm_V5_Vel_Control(3, 1, 50, 0, 0);
-  // Emm_V5_Vel_Control(4, 1, 50, 0, 0);
+  // Emm_V5_Vel_Control(1, 0, 50, 0, 0);//fr
+  // Emm_V5_Vel_Control(2, 1, 0, 0, 0);//rz
+  //  Emm_V5_Vel_Control(3, 0, 50, 0, 0);//fz
+  //  Emm_V5_Vel_Control(4, 1, 50, 0, 0);//rr
 
   /* ── 调度器 ──────────────────────────────────────────────────────────
    * 架构: 驱动源 → defaultTask 调度器 → Worker 任务。
@@ -277,6 +267,8 @@ void StartDefaultTask(void *argument)
    *
    * task_recive() 内部是 portMAX_DELAY 阻塞, 队列空时本任务挂起、不占 CPU;
    * 下面的 osDelay(20) 只在真的收到一条命令之后才会执行。 */
+  // HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+  // Servo_SetAngle(38);
   for(;;)
   {
     TaskCommand_t cmd = task_recive();
@@ -310,7 +302,7 @@ void ops9imu_fuction(void *argument)
   {
     active_locator->update();
     active_locator->get_pose(&o_pose);
-    // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+     printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
     osDelay(10);
   }
   /* USER CODE END ops9imu_fuction */
@@ -378,7 +370,7 @@ void FC_TASK(void *argument)
   NX_Init();
   /* Infinite loop */
   for(;;)
-  {
+   {
     FC_Fuction();
     osDelay(10);
   }
@@ -399,28 +391,10 @@ void NLF_TASK(void *argument)
   for(;;)
   {
     NLF_Fuction();
+
     osDelay(1);
   }
   /* USER CODE END NLF_TASK */
-}
-
-/* USER CODE BEGIN Header_AC_Fuction */
-/**
-* @brief Function implementing the AC_Task thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_AC_Fuction */
-void AC_Fuction(void *argument)
-{
-  /* USER CODE BEGIN AC_Fuction */
-  /* Infinite loop */
-  for(;;)
-  {
-    Angle_Fuction();
-    osDelay(1);
-  }
-  /* USER CODE END AC_Fuction */
 }
 
 /* Private application code --------------------------------------------------*/

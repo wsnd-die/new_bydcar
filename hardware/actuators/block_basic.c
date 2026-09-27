@@ -246,7 +246,7 @@ void Servo_SetAngle(float Angle)
 {
     if(Angle>=125){Angle=125;}
     if(Angle<=37){Angle=37;}
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, Angle / 180 * 2000 + 500);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, Angle / 180 * 2000 + 500);
 
 }
 /* K230 圆心像素 → 车体横向位移 (m/像素)。比例/方向需实测调, 反了取负 */
