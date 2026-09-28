@@ -146,7 +146,7 @@ void Place(char dir,float x,float y,uint16_t height);
      *
      */
 void Servo_SetAngle(float Angle);
-
+void BPlace_SetZero() ;
 #ifdef __cplusplus
 }
 #endif

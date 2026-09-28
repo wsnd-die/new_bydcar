@@ -24,7 +24,7 @@
 #include "mecanum.h"
 #include "hwt_imu.h"
 #include "emm_5v.h"
-#include "Nav_position.h"
+
 /* ============================================================
  * 内部状态
  *

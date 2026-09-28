@@ -106,7 +106,7 @@ osThreadId_t ops9imu_taskHandle;
 const osThreadAttr_t ops9imu_task_attributes = {
   .name = "ops9imu_task",
   .priority = (osPriority_t) osPriorityHigh,
-  .stack_size = 256 * 6
+  .stack_size = 256 * 4
 };
 /* Definitions for gripper */
 osThreadId_t gripperHandle;
@@ -129,13 +129,6 @@ const osThreadAttr_t nav_task_attributes = {
   .priority = (osPriority_t) osPriorityHigh,
   .stack_size = 256 * 4
 };
-/* Definitions for AC_Task */
-osThreadId_t AC_TaskHandle;
-const osThreadAttr_t AC_Task_attributes = {
-  .name = "AC_Task",
-  .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 256 * 4
-};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -149,7 +142,6 @@ void ops9imu_fuction(void *argument);
 void gripper_task(void *argument);
 void FC_TASK(void *argument);
 void NLF_TASK(void *argument);
-void AC_Fuction(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -208,9 +200,6 @@ void MX_FREERTOS_Init(void) {
   /* creation of nav_task */
   nav_taskHandle = osThreadNew(NLF_TASK, NULL, &nav_task_attributes);
 
-  /* creation of AC_Task */
-  AC_TaskHandle = osThreadNew(AC_Fuction, NULL, &AC_Task_attributes);
-
   /* USER CODE BEGIN RTOS_THREADS */
   /* USER CODE END RTOS_THREADS */
 
@@ -230,7 +219,7 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
+  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
 
   // Emm_V5_En_Control(1,1,0);
   // Emm_V5_En_Control(2,1,0);
@@ -254,11 +243,11 @@ void StartDefaultTask(void *argument)
   // Servo_SetAngle(38);
   for(;;)
   {
-    TaskCommand_t cmd = task_recive();
-    if (cmd.k) {
-      NLF_Request(cmd.Mode);
-    }
-
+    // TaskCommand_t cmd = task_recive();
+    // if (cmd.k) {
+    //   NLF_Request(cmd.Mode);
+    // }
+    BPlace_SetZero();
 
     osDelay(20);
   }
@@ -285,6 +274,7 @@ void ops9imu_fuction(void *argument)
   {
     active_locator->update();
     active_locator->get_pose(&o_pose);
+    //BPlace_SetZero();
     // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
     osDelay(10);
   }
@@ -304,6 +294,8 @@ void gripper_task(void *argument)
   /* ── 总线初始化 ────────────────────────────────────────────────────
    * 串口助手接 huart2 (PA2/PA3, 115200) 看 printf 输出。
    * 常量见本文件 USER CODE BEGIN PD 区。 */
+//printf("hallo\r\n");
+
   if (!SCS_BusInit()) {
     /* huart5.Instance == NULL —— MX_UART5_Init() 没跑，见变更记录 V1.10.0 备注 2 */
     printf("[scs] bus init FAIL: huart5 not initialized\r\n");
@@ -360,24 +352,9 @@ void NLF_TASK(void *argument)
   {
     NLF_Fuction();
 
-    osDelay(1);
+    osDelay(10);
   }
   /* USER CODE END NLF_TASK */
-}
-
-/* USER CODE BEGIN Header_AC_Task */
-/**
-* @brief Function implementing the AC_Task thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_AC_Task */
-void AC_Fuction(void *argument)
-{
-  /* USER CODE BEGIN AC_Task */
-  (void)argument;      /* 签名对齐 osThreadFunc_t; 实际主体在 worker_task.c */
-  Angle_Fuction();     /* IMU 轮询 + 角度环, 永不返回 */
-  /* USER CODE END AC_Task */
 }
 
 /* Private application code --------------------------------------------------*/

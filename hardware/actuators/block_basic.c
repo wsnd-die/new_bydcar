@@ -291,3 +291,20 @@ void Place(char dir,float x,float y,uint16_t height)
         Nav_MoveBody(-0.05,  0, 0 ) ;
     }
 }
+
+void BPlace_SetZero()
+{
+   uint8_t block_pos=0;
+    block_pos=HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
+
+     while (!block_pos) {
+         block_pos=HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
+
+
+
+     }
+
+
+
+}
+
