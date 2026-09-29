@@ -100,13 +100,51 @@ int ftUart_Read(uint8_t *nDat, int nLen)
 }
 
 /**
- * @brief  总线静默延时（厂商接口）。对应 scslib 的 rFlushSCS()，每条命令前调用一次。
+ * @brief  总线静默延时 + **排空接收残留**（厂商接口，对应 scslib 的 rFlushSCS()）。
  * @note   厂商 demo 里是 HAL_Delay(1)。这里按上下文分流：
  *         **调度器未启动时必须走 HAL_Delay** —— osDelay() 在调度器启动前会
  *         NULL 解引用跳 HardFault（见 changelog V1.6.2 的定位结论）。
+ *
+ * @note   **排空 RX 是必需的，不是顺手加的。** 厂商的 `rFlushSCS()`
+ *         （scslib/SCSerail.c:45）注释写着「接收缓冲区刷新」，实现却只是调本函数
+ *         —— **它不清 RX**。于是残留字节会留在 UART 里，而下一次命令的
+ *         `checkHead()`（scslib/SCS.c:424）会在**残留帧的 `FF FF` 上立刻对齐**：
+ *         读到的从机 ID 是上一帧那颗舵机的 → `SCS_ERR_SLAVE_ID` → `Read()` 返回 0
+ *         → 回读函数返回 -1。而 `checkHead()` 最多只吃掉 11 字节，
+ *         `SCS_FeedBack()` 那类 21 字节的回帧根本吃不干净，
+ *         **残留继续留给下一次 → 永久级联错位**（现象：回读跑一会儿就恒为 -1）。
+ *
+ *         残留从哪来（两条路都会发生）：
+ *           1. **ORE 溢出** —— G4 的 UART **没有 RX FIFO**，1M 波特率下逐字节轮询
+ *              两次读 RDR 之间超过约 10µs 就丢字节。而本 HAL 版本的阻塞接收
+ *              **完全不检查 ORE/FE/NE**（见 stm32g4xx_hal_uart.c 的
+ *              `HAL_UART_Receive` 内层循环，只等 RXNE），溢出是静默的，
+ *              帧被"错位填充"，校验和必然不符；
+ *           2. **收帧途中被抢占** —— `gripper` 是 osPriorityNormal，
+ *              而 `ops9imu_task` / `NLF_TASK` 是 osPriorityHigh。
+ *
+ *         在这里排空 + 清错误标志，能让一次失败**只是失败一次**，
+ *         而不是从此永远错位。
+ *
+ * @warning 读 RDR 本身就会清 ORE（STM32 语义），下面的显式清标志并不重复 ——
+ *         循环排空只处理"还有字节"的情况，若 RXNE 已空但 ORE 仍挂着，
+ *          就得靠显式清。两者都要有。
+ * @warning **不要在收发路径上加别的等待**，本函数是每条命令的热路径。
  */
 void ftBus_Delay(void)
 {
+    /* 1. 排空 RX 里可能残留的字节（上一条命令没读干净的尾巴）。
+     *    读 RDR 的同时也清掉 ORE。 */
+    while (__HAL_UART_GET_FLAG(&SCS_UART, UART_FLAG_RXNE) != RESET) {
+        (void)SCS_UART.Instance->RDR;
+    }
+
+    /* 2. 显式清错误标志。ORE 若一直挂着，后续帧会持续丢字节。
+     *    三个都在同一张 ICR 寄存器上，一并清掉。 */
+    __HAL_UART_CLEAR_OREFLAG(&SCS_UART);
+    __HAL_UART_CLEAR_FLAG(&SCS_UART, UART_CLEAR_FEF);
+    __HAL_UART_CLEAR_FLAG(&SCS_UART, UART_CLEAR_NEF);
+
     if (osKernelGetState() == osKernelRunning) {
         osDelay(SCS_BUS_DELAY_MS);
     } else {
@@ -548,6 +586,42 @@ int SCS_ReadMove(int id)
 {
     int held = SCS_Lock();
     int r = ReadMove(id);
+    if (held) { SCS_Unlock(); }
+    return r;
+}
+
+/**
+ * @brief  读 SCS0009（SCS/CL 系列，本工程 ID 2~6）的当前位置。
+ * @param  id  舵机 ID（2~6）。
+ * @retval 原始位置 0~1024（10 位编码器 ↔ 0~300°，中位 500）；失败返回 -1。
+ *
+ * @note   **为什么直读 2 字节，而不是走 `SCS_FeedBack()` + `SCS_ReadPos(-1)`。**
+ *         直读只取寄存器 56 的 2 字节，回帧 8 字节（@1Mbps ≈ 80µs）；
+ *         批量读要取 56~70 共 15 字节，回帧 21 字节（≈ 210µs）。
+ *         G4 的 UART **没有 RX FIFO**，收帧越长越容易被抢占/溢出打断，
+ *         打断一次就丢同步 —— 详见 `ftBus_Delay()` 的说明（那里负责把级联打断）。
+ *         跨度缩短 2.6 倍，出错概率同比降低。
+ *
+ * @note   **字节序在锁内设定，所以没有竞态。** SCS/CL 系列要大端，而
+ *         `SCS_ReadPos()` 自己不设 `End`（只有写函数会设）。若在调用方先
+ *         `SCS_SetEnd(1)` 再 `SCS_ReadPos()`，两步之间可能被别的系列的写命令
+ *         （如转盘 ID1 的 `SCS_WritePosEx()` 会 `scs_little_endian()`）翻掉，
+ *         于是读到字节交换的错值且不报错。锁内设定则不可能被插队。
+ *
+ * @note   也**不能**在调用方用 `SCS_Lock()` 把 `SCS_SetEnd()` + `SCS_ReadPos()`
+ *         包起来：本文件的总线互斥锁**不是递归锁**（`s_mutex_attr` 只有
+ *         `osMutexPrioInherit`），而 `SCS_ReadPos()` 内部自己会取锁 ——
+ *         嵌套取锁会在 `SCS_MUTEX_TIMEOUT_MS`(200ms) 后超时并降级为无锁执行，
+ *         既白等又失去保护。要"锁内设字节序"就必须像本函数这样做成一个包装。
+ *
+ * @warning 阻塞在总线往返上（最长 `SCS_UART_RX_TIMEOUT_MS` = 100ms），
+ *          不要在控制环里调。
+ */
+int Scs0009_ReadRaw(uint8_t id)
+{
+    int held = SCS_Lock();
+    scs_big_endian();               /* SCS/CL 系列 = 大端; 锁内设, 不会被插队翻掉 */
+    int r = ReadPos(id);            /* 只读寄存器 56, 2 字节 */
     if (held) { SCS_Unlock(); }
     return r;
 }

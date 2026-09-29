@@ -7,6 +7,7 @@
 #include "block_basic.h"
 #include "emm_5v.h"
 #include "NavigationMecanum.h"
+#include "key.h"
 #include "servo_scs.h"      /* 转盘 STS3032 总线舵机: SCS_WritePosEx (V1.16.0) */
 #define CLAMP_FLOAT(v, lo, hi)  ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define DEG2RAD(d)              ((d) * 0.01745329252f)
@@ -140,11 +141,11 @@ float BlockBasic_LiftTo(uint8_t dir, float pos)
         uint32_t pulse = (uint32_t)(pos * BLOCK_STEPPER_PULSE_PER_MM);
         if (dir == 0)
         {
-            Emm_V5_Pos_Control(5, 0, 800, 255, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 0, 1000, 0, pulse, 0, 0);
         }
         else
         {
-            Emm_V5_Pos_Control(5, 1, 800, 255, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 1, 1000, 0, pulse, 0, 0);
         }
         return 0.0f;
     }
@@ -292,19 +293,16 @@ void Place(char dir,float x,float y,uint16_t height)
     }
 }
 
-void BPlace_SetZero()
+bool BPlace_SetZero(void)
 {
-   uint8_t block_pos=0;
-    block_pos=HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
-
-     while (!block_pos) {
-         block_pos=HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
-
-
-
+    uint8_t block_pos=0;
+    block_pos=Key_IsPressed(KEY_LIMIT);
+    // printf("%d\r\n",block_pos);
+     if (!block_pos) {
+         Emm_V5_Pos_Control(5,1,1000,0,1600,0,0);
+         return false;
      }
-
-
-
+    Emm_V5_Stop_Now(5,0);
+    return true;
 }
 

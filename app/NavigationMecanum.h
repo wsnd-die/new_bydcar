@@ -34,6 +34,10 @@ extern World_Dir_t Self_Dir;
 /* 最大路径点数量 */
 #define NAV_WAYPOINT_MAX  32
 
+/** 角度 → 弧度 (π/180)。写路径点 yaw 用: -90.0f * NAV_DEG2RAD
+ *  @note 常量表达式, 可直接用于数组静态初始化。 */
+#define NAV_DEG2RAD       0.01745329252f
+
 /* ============================================================
  * 世界系位置闭环参数 (100Hz, OPS9 反馈)
  * 全部为初版整定值, 上机按实际响应调, 改完记 clauderecord。
@@ -54,10 +58,15 @@ extern World_Dir_t Self_Dir;
 #define NAV_ARRIVE_TICKS       5u      /* 连续 5 拍判到达 (抗单帧抖动) */
 #define NAV_MAX_INVALID_TICKS  20u     /* OPS9 离线容忍 0.2s, 超限零速保持 */
 
-/*
- * 路径点数组（世界坐标系）
- * 每个元素: { X(m), Y(m), yaw(rad) }
- * yaw 可使用 MECANUM_DEG_TO_RAD 辅助书写，例如 90.0f * MECANUM_DEG_TO_RAD
+/**
+ * 分点导航路径点表（世界坐标系）。
+ *
+ * 每个元素: { X(m), Y(m), yaw(rad) }，yaw 用角度写更直观: 90.0f * NAV_DEG2RAD。
+ *
+ * @warning 表里的坐标是 **2026-09-14 旧场地**的实测值，上机前必须逐点复核。
+ *          配合 worker_task.c 的 NF_AUTOSTART=1 时，这张表就是"上电即发车"
+ *          的路线，填错会直接把车开出去。
+ * @note    改完表记得同步 `g_waypoint_count`（Nav_FeDuanPoint 的游标上界）。
  */
 extern World_Dir_t g_waypoints[NAV_WAYPOINT_MAX];
 extern uint8_t      g_waypoint_count;
@@ -66,19 +75,20 @@ extern uint8_t      g_waypoint_count;
  * 函数声明
  * ============================================================ */
 
-void Chassis_WorldMoveTest(void);
 
 /**
  * @brief 导航到目标世界坐标（世界系位置闭环）
  *
  * 以 OPS9 位姿 (locator_ops9.get_pose, 世界系 x/y/yaw) 为反馈，
  * 三轴并行 PD (Ki=0) 输出世界系期望速度 → 软启动加速度斜坡 →
- * 世界→车体旋转 → Mecanum_Calc_Full_V → Mecanum_Vel_Execute
+ * 世界→车体旋转 → Mecanum_Calc_Full_V → Send_commandmotor
  * 下发电机速度环。阻塞直到到达或超时，退出时零速停车。
  *
- * @note 运行于 NLF_TASK 上下文；入口按契约关角度环
- *       (g_angle_ctrl_enable=0 + osDelay(20)) 独占电机控制权。
- *       反馈无效按 NAV_MAX_INVALID_TICKS 容忍，超限零速保持。
+ * @note 入口按契约关角度环（g_angle_ctrl_enable=0 + osDelay(20)）独占电机
+ *       控制权，**但退出时不恢复该标志** —— 调用方若后续需要角度环，得自己
+ *       重新置 1（对照 algorithm/arc_path.c 的 Arc_Run/Arc_Abort 是有借有还的）。
+ * @note 反馈无效按 NAV_MAX_INVALID_TICKS 容忍：短时冻结指令继续跑，
+ *       超限零速保持并清斜坡，恢复后从零重新软启动。
  * @param target_x    目标世界 X 坐标，单位：m
  * @param target_y    目标世界 Y 坐标，单位：m
  * @param target_yaw  目标世界航向角，单位：rad
@@ -86,9 +96,43 @@ void Chassis_WorldMoveTest(void);
  * @return false      超时（NAV_TIMEOUT_MS，含反馈长期无效）
  */
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
+
+/**
+ * @brief 分点导航 —— 按 g_waypoints[] 逐点推进
+ *
+ * 每次调用驱动到**一个**路径点（内部游标记进度），走完整张表后恒返回 true。
+ * "一次一步"是刻意的：worker_task.c 的 NF_Stage_Navigation() 每被流程调到
+ * 一次就推进一站，站点之间流程还能经 NF_DispatchNext() 分发到循迹等其它阶段。
+ *
+ * @note 到达判据、超时、反馈失效处理都在 Nav_GoToWorld() 里，本函数只做推进。
+ * @note 与旧副本 (4eedf6a) 的差异：旧版把第 13 点之后的两点塞在同一次调用里
+ *       （`PontIntex == 13` 的特判），这里不再特判，表中 13/14 号就是普通点。
+ *
+ * @warning 游标只在**成功**时推进，超时的点下次会重试。而调用方
+ *          NF_Stage_Navigation() 目前**忽略本函数的返回值** —— 若某个点因
+ *          OPS9 离线等原因持续失败，流程会永远卡在 Navigation 阶段。
+ *          真出现这种情况，需要给本函数加失败上限计数，或让调用方检查返回值。
+ *
+ * @return true   本点已到达（或整条路线已走完）
+ * @return false  本点超时未到达（游标不推进，下次重试）
+ */
 bool Nav_FeDuanPoint(void);
 
-bool Nav_MoveBody(float target_x, float target_y, float target_yaw) ;
+/**
+ * @brief 世界系相对移动 —— 以当前 Self_Dir 为基准走一个相对位移
+ *
+ * 三个参数都是**世界系增量**，不是车体量：
+ *     目标 = Self_Dir + (target_x, target_y, target_yaw)
+ * 内部转调 Nav_GoToWorld() 做闭环，阻塞直到到位或超时。
+ *
+ * @note **不是车体坐标。** 想让车沿车头方向走 d 米，得先把 d 投到世界系；
+ *       直接传 (d, 0, 0) 只有车头正对世界 +X 轴时才等于"前进"。
+ * @note target_yaw 与 Self_Dir.yaw 相加后**未归一化到 ±π**，调用方若传大角度
+ *       需自行 wrap。
+ * @note 旧版同名函数是"先原地转到 rotate_rad，再按车体 forward/left 平移"，
+ *       与本实现语义完全不同 —— 本头文件此前贴的是旧版文档，已按现实现更正。
+ */
+bool Nav_MoveBody(float target_x, float target_y, float target_yaw);
 
 /**
  * @brief 循迹完成后按实测位置校准 a 点 / 亚军点
@@ -107,35 +151,6 @@ void Nav_CalibrateAfterTrace(bool is_trophy);
  */
 bool Nav_RunWaypoints(void);
 
-/* ============================================================
- * 车体坐标运动 (Body-frame)
- * ============================================================ */
-
-/**
- * @brief 车体坐标运动 — 前进/左移/旋转，阻塞直到到位或超时
- *
- * 坐标系: forward(+) 朝车头, left(+) 朝车体左方, rotate(+) CCW
- * 内部调用 Mecanum_MoveWithEncoder 执行，并自动更新 Self_Dir。
- *
- * @param forward_m  前进距离 (m)，负值=后退
- * @param left_m     左移距离 (m)，负值=右移
- * @param rotate_rad 旋转角度 (rad)，正值=CCW
- * @return true      运动执行成功
- * @return false     解算或执行失败
- */
-bool Nav_MoveBody(float forward_m, float left_m, float rotate_rad);
-
-/** @brief 前进/后退 (m)，正=前进，负=后退 */
-bool Nav_MoveForward(float distance_m);
-
-/** @brief 左移/右移 (m)，正=左移，负=右移 */
-bool Nav_MoveLeft(float distance_m);
-
-/** @brief 原地旋转 (rad)，正=CCW */
-bool Nav_Rotate(float angle_rad);
-
-/** @brief 速度模式到位控制(世界系目标), 编码器+陀螺仪定位 */
-bool Nav_TrackPose(float tx, float ty, float tyaw);
 
 
 #ifdef __cplusplus

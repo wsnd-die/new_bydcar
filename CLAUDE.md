@@ -42,7 +42,7 @@ app/              应用层：任务调度（banyuntask、worker_task）、比�
 algorithm/        业务层：mecanum、pid、angle_ctrl、Circle_base、Nav_position、arc_path
 device/           抽象设备层：PoseData_t + LocatorDev_t 接口 ＋ locator_wheel 实现（OPS9/光流尚未接入）
 hardware/         硬件驱动层，按器件类型细分：
-  ├─ sensors/       hwt_imu、grayscale、color、collect_ir、k230、QRcode
+  ├─ sensors/       hwt_imu、grayscale、color、collect_ir、k230、QRcode、key（V1.18.0，待接线）
   ├─ actuators/     emm_v5、Send_motor、block_basic、servo_scs（＋scslib/ 厂商舵机库，见 V1.10.0）
   ├─ display/       oled、oled_data
   ├─ bus/           sw_uart、uart2_tbop10
@@ -72,13 +72,46 @@ obsolete/         已停用的驱动（imu660/、hwt101_legacy/、wit_protocol/�
 > `osThreadFlagsWait`、`NLF_RunFlow()` 一次也没执行过 —— 这条链目前只通到调度器，
 > 还跑不通一条完整流程。
 >
+> V1.17.0 **把整条比赛流程编排进了 `NLF_RunFlow()`**（原先只是个 Mode → 执行体的
+> 空壳），并顺带修掉三处让流程根本跑不起来的断点（V1.17.1）。编排取自一份
+> **不在本仓库 git 历史里**的旧 8 任务版 `app_freertos.c`（`NLFKION` / `ColorFunion` /
+> `BsRtFunion` / `Navesafter_mode` 等符号在全历史零命中，是另一份副本），
+> 只参考其**流程语义**，不是恢复其代码。要点：
+>
+> - **不再扫二维码**，奖杯放置顺序与槽位颜色改为 `worker_task.c` 顶部的硬编码默认值
+>   （每个表都标了「★ NX 接入点」），等上位机 NX 的回传报文接入后只改
+>   `NF_FlowSeed()` 一处；
+> - **循迹两段（`Event_LinFolL` / `Event_LinFolR`）是打桩** —— 循迹控制器
+>   `algorithm/Trace_base.c` 已随 V1.6.0 删除，本次不恢复；
+> - **`Nav_FeDuanPoint()` / `Nav_CalibrateAfterTrace()` 也是打桩** —— 它们此前
+>   只有声明没有定义，调用即链接失败（V1.17.2 补的）；
+> - 默认 `NF_AUTOSTART 1`：**上电即自动开跑**。当前导航/循迹都是打桩所以车不动，
+>   但那两段一旦补上真实现，这个开关就等于"上电发车"。
+>
 > V1.6.0 **移除了整个循迹功能**（`GrayTrace` / `Trace_base` / `trace_tune` 共 6 个文件），
 > 只保留 K230 找圆与导航。V1.5.0 遗留的 ② `trace_tune` 双向耦合、③ `QRcode.c` 中断
 > 回调硬编码分流，随之消失。
 >
 > **仍待处理**（按优先级）：① `app/` 内三个业务模块向 `algorithm/` 的下沉（需先定义
 > 位姿输入 / 底盘输出 / 阻塞旋转 / 计时四个注入式接口）；② `config/param_config.h`
-> 的参数收拢；③ 确认 `grayscale.c` / `k230.c` 里失去调用者的驱动 API 是否还要保留。
+> 的参数收拢（V1.17.0 的硬编码默认值届时一并迁入）；③ 确认 `grayscale.c` / `k230.c`
+> 里失去调用者的驱动 API 是否还要保留；④ **任务职责梳理** —— `FC_TASK` 的文档说它是
+> 10ms 角度环，实际它只发 NX 找圆模式，真正的角度环跑在 `angle_Task`（优先级 8）里，
+> 而 `NLF_TASK` 是 40，与文档要求的"角度环必须能抢占流程任务"相反（V1.17.1 备注 1）；
+> ⑤ `Nav_FeDuanPoint()` 与 `g_waypoints[]`（**17 个点，已随 V1.19.2 换成现场
+> 示教值**）均已落地，但：**第 11 个点仍是旧占位值待示教**；`Nav_FeDuanPoint()`
+> 的调用方 `NF_Stage_Navigation()` **忽略其返回值**，加上"失败不推进"的语义，
+> 某个点持续失败会让流程永久卡在 Navigation 阶段（V1.19.0 备注 1）；
+> 且**流程只提供 11 次中继站访问，走不完 17 个点**（V1.19.2 第 5 条）。
+> **`worker_task.c` 的 `NF_STAGES[]` 当前是【临时单站表】，测完必须还原。**
+> 仍待补：`Nav_CalibrateAfterTrace()`、循迹两段；
+> 另有 `Nav_MoveBody()` 实为世界系增量而非文档所称车体量（V1.19.0 第 5 条）、
+> `Nav_GoToWorld()` 借走 `g_angle_ctrl_enable` 后不恢复；
+> ⑥ **确认 PB0 限位开关的有效电平** —— `block_basic.c:295` 的 `BPlace_SetZero()`
+> 判据是「低 = 未到位」，与 V1.18.0 按键驱动假定的「按下 = 高」相反，
+> 而 `gripper_task` 里 `while (!BPlace_SetZero());` 是**死等**，配错会让该任务
+> 永久阻塞。另外 `.ioc` 里 PB0 写的是 `GPIO_PULLUP`、生成的 `gpio.c` 却是
+> `GPIO_NOPULL`（改过 `.ioc` 没重新生成），PA0 则完全没配 PuPd —— 两个脚目前都是浮空输入。
 
 | 规范中的名字 | 仓库现状 | 说明 |
 |---|---|---|
@@ -329,6 +362,17 @@ active_locator->get_pose(&robot_pose);
 
 | 版本 | 日期 | 摘要 | 记录 |
 |---|---|---|---|
+| V1.19.4 | 2026-09-29 | 新增：`Scs0009_ReadRaw()` —— 读 SCS0009 位置（走 `SCS_FeedBack` 缓冲区路径以**绕开字节序竞态**）；**零调用者，待接线** | [2026-09-29](clauderecord/2026-09-29.md) |
+| V1.19.5 | 2026-09-29 | 修复：**回读跑一会儿就恒为 -1** —— 根因是厂商 `rFlushSCS()` 是假刷新（只延时不清 RX）导致残留错位级联；`ftBus_Delay()` 补 RX 排空 + 清 ORE/FE/NE，`Scs0009_ReadRaw()` 改直读 2 字节（回帧 21→8 字节） | [2026-09-29](clauderecord/2026-09-29.md) |
+| V1.17.0 | 2026-09-28 | 新增：把整条比赛流程编排进 `NLF_RunFlow()`；不再扫二维码，奖杯顺序/槽位颜色改用硬编码默认值（标了 ★ NX 接入点）；循迹两段打桩 | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.17.1 | 2026-09-28 | 修复：调度链三处断点 —— `nlfTaskHandle` 恒 NULL（`NLF_Request` 从没发过标志）、`NLF_TASK` 栈实际 1KB 与声明不符、任务名 `findcircle_TASK`/`nav_task` 误导 | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.17.2 | 2026-09-28 | 新增：`Nav_FeDuanPoint()` / `Nav_CalibrateAfterTrace()` 此前有声明无定义（调用即链接失败），补成打桩 | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.17.3 | 2026-09-28 | 修复：`Nav_MoveBody()` 声明 `bool` 却无 `return`（UB） | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.18.0 | 2026-09-28 | 新增：按键消抖驱动 `hardware/sensors/key.*`（PB0 限位 / PA0 启动）；连续采样确认法；**零调用者，待接线** | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.19.0 | 2026-09-28 | 新增：`Nav_FeDuanPoint()` 从打桩补成真实现（一次一步推进）+ 恢复 `g_waypoints[]` 15 个点（**旧场地坐标，待复核**）；新增 `NAV_DEG2RAD`；更正 `Nav_MoveBody()` 文档（世界系非车体系）、标注 5 个无定义声明 | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.19.1 | 2026-09-28 | 修改：修正 OPS9 坐标系映射（实测差一个 −90° 旋转，`x_w=y_o, y_w=−x_o`；det=+1 故 yaw 不反号）；**平移段已上机验证准确**，转向段与 **yaw 零点**仍未标定 | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.19.2 | 2026-09-28 | 修改：`g_waypoints[]` 换成 17 个**现场示教值**（旧表属里程计坐标系，在 OPS9 系下无效）+ 字面量补 `f` 消 49 处窄化告警；**【临时】`NF_STAGES[]` 换单站表专测分点导航 —— 测完必须还原** | [2026-09-28](clauderecord/2026-09-28.md) |
+| V1.19.3 | 2026-09-28 | 修改：取消上电自动开跑（`NF_AUTOSTART` 1→0），改由**启动键 PA0 触发**；触发放在 `KEY_TASK` —— 原先放在 `StartDefaultTask` 的位置因 `task_recive()` 用 `portMAX_DELAY` 而**根本不会执行**。⚠ PA0 仍浮空，可能自发车 | [2026-09-28](clauderecord/2026-09-28.md) |
 | V1.16.0 | 2026-09-27 | 修改：转盘舵机由 TIM3_CH2 PWM 改为 UART5 上的 STS3032 总线舵机（`SCS_WritePosEx`）；删除 `block_servo_write()` | [2026-09-27](clauderecord/2026-09-27.md) |
 | V1.14.0 | 2026-09-26 | 删除：TBOP 里程计自动标定整块（死代码 + 跨层违规）；`Odometry_Apply_Calib` 剥离为单分支 | [2026-09-26](clauderecord/2026-09-26.md) |
 | V1.14.1 | 2026-09-26 | 修改：USART3(OPS9) 接收改 DMA+IDLE；`HAL_UARTEx_RxEventCallback` 收归 `usart.c` 做唯一分发器 | [2026-09-26](clauderecord/2026-09-26.md) |

@@ -33,16 +33,8 @@ extern "C" {
 
 #define BLOCK_SERVO_DEG              360.0f
 
-/* ================================================================
- * 转盘舵机：飞特 STS3032 总线舵机（UART5，SMS_STS 系列）
- *
- * V1.16.0 起转盘由 TIM3_CH2 的 PWM 舵机改为总线舵机，位置写走
- * SCS_WritePosEx()（见 servo_scs.h），不再占用任何 TIM 通道。
- *
- * 与 UART5 上 ID2~6 的 SCS0009 分属两个相反的字节序系列：
- * SCS_WritePosEx() 会自己在锁内把总线字节序切成小端，调用方不必管。
- * ================================================================ */
-/** 总线上的舵机 ID。与 Core/Src/app_freertos.c 的 SERVO_ID_STS3032 是同一颗。 */
+
+/** 总线上的舵机 ID。 */
 #define BLOCK_TURNTABLE_SERVO_ID         1u
 /** 位置量程上限：12 位单圈绝对值，0~4095 对应 0~360°（中位 2048）。 */
 #define BLOCK_TURNTABLE_SERVO_POS_MAX    4095u
@@ -65,7 +57,7 @@ extern "C" {
 /* 转盘位置编号从 1 开始，合法范围为 1~5。 */
 #define BLOCK_TURNTABLE_FIRST_POS        1u
 #define BLOCK_TURNTABLE_POS_COUNT        5u
-#define BLOCK_TURNTABLE_HOME_DEG         0.0f
+#define BLOCK_TURNTABLE_HOME_DEG         14.0f
 #define BLOCK_TURNTABLE_STEP_DEG         (BLOCK_SERVO_DEG / BLOCK_TURNTABLE_POS_COUNT)
 /* 单次最大角度步长。分段移动用于降低 360 度位置舵机自动走最短路径的风险。 */
 #define BLOCK_TURNTABLE_STEP_LIMIT_DEG   72.0f
@@ -141,12 +133,9 @@ BlockStatus BlockBasic_TurntableTo(uint8_t block_pos);
  */
 void Servo_Angle(float angle_deg);
 void Place(char dir,float x,float y,uint16_t height);
-    /*
-     *
-     *
-     */
+
 void Servo_SetAngle(float Angle);
-void BPlace_SetZero() ;
+bool BPlace_SetZero(void) ;
 #ifdef __cplusplus
 }
 #endif

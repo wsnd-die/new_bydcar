@@ -34,9 +34,6 @@ void Arc_SetParam(float radius_m, float v_mps, float sweep_deg)
 
 void Arc_Abort(void)
 {
-    /* 顺序有意义: 先关使能, 让 FC_TASK 走下降沿去主动刹停, 再清几何量。
-     * 反过来的话, FC_TASK 可能刚好在两拍之间读到 "使能还在但速度已是 0"
-     * 的中间态 —— 虽然结果也是停, 但语义不干净。 */
     g_angle_ctrl_enable = 0;
     g_angle_ctrl_speed  = 0.0f;
     g_angle_ctrl_w_ff   = 0.0f;

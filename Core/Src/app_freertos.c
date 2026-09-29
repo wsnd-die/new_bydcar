@@ -33,7 +33,12 @@
 #include "servo_scs.h"
 #include "NX_uart.h"
 #include "block_basic.h"
+#include "mecanum.h"
+#include "Send_motor.h"
 #include "worker_task.h"
+#include "key.h"
+#include "NavigationMecanum.h"
+#include "collect_ir.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,18 +50,6 @@
 /* USER CODE BEGIN PD */
 
 
-#define SERVO_ID_STS3032      1      /* STS3032, SMS_STS 系列 */
-#define SERVO_ID_SCS0009_MIN  2      /* SCS0009, SCSCL 系列 */
-#define SERVO_ID_SCS0009_MAX  6
-
-#define STS_CENTER     0    /* STS3032: 0~4095 的中位（当前无调用者） */
-#define STS_SPEED       0    /* 原始寄存器值，单位见 STS3032 数据手册 */
-#define STS_ACC         0      /* 原始寄存器值，0 = 不控加速度直冲最高速 */
-#define SCS_CLOSE     450     /* SCS0009: 0~1024 的中位（0.293°/步，全行程 300°） */
-#define SCS_OPEN      620
-#define SCS_SPEED       0    /* 原始寄存器值，0 = 用寄存器内部值 */
-#define SCS_TIME        0       /* 0 = 用寄存器内部值 */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -67,31 +60,20 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-/* Worker 任务属性。句柄 (fcTaskHandle / nlfTaskHandle) **不在本文件定义** ——
- * 它们定义在 app/worker_task.c:38-39, 因为调度器要通过句柄给任务发线程标志。
- * 本文件只负责创建并把句柄赋值回去。
+/* Worker 任务的句柄 (fcTaskHandle / nlfTaskHandle) **不在本文件定义** ——
+ * 它们定义在 app/worker_task.c, 因为 NLF_TASK 要拿自己的句柄做
+ * osThreadFlagsSet 自唤醒 (见 worker_task.c 的 NLF_Request)。
+ * 本文件只负责创建任务、并把生成的句柄转存过去, 见 MX_FREERTOS_Init 里
+ * USER CODE BEGIN RTOS_THREADS 那一段。
  *
- * @note 这两组属性必须放在 USER CODE 区。上面生成区那三组 (defaultTask /
- *       ops9imu_task / gripper) 由 CubeMX 按 .ioc 的 FREERTOS.Tasks01 生成,
- *       手工加的内容会在重新生成时被静默删掉。
+ * @note 任务的属性 (优先级/栈深/名字) **全部由 .ioc 的 FREERTOS.Tasks01 生成**,
+ *       本文件不再另存一份 —— 此前这里曾有两组重复的 fcTask_attributes /
+ *       nlfTask_attributes, 定义了却从没传给 osThreadNew, 是纯死代码,
+ *       2026-09-28 清理掉。要改栈深请改 .ioc, 否则重新生成会被冲掉。
  *
- * 优先级: ops9imu_task = osPriorityHigh(40) 保持最高; FC_TASK 取 AboveNormal(32),
- *         高于 NLF_TASK 的 Normal(24) —— FC_TASK 是 10ms 角度环, 必须能抢占
- *         阻塞式流程任务, 否则控制周期会被拉长。
- *
- * 栈深: 直接复用 app/worker_task.h:58-59 的宏, 不写字面量 (规范第 7.3 节)。
- *       CMSIS-RTOS2 的 stack_size 单位是**字节**, 故乘 4。 */
-const osThreadAttr_t fcTask_attributes = {
-  .name       = "FC_TASK",
-  .priority   = (osPriority_t) osPriorityAboveNormal,
-  .stack_size = FC_TASK_STACK_WORDS * 4
-};
-
-const osThreadAttr_t nlfTask_attributes = {
-  .name       = "NLF_TASK",
-  .priority   = (osPriority_t) osPriorityNormal,
-  .stack_size = NLF_TASK_STACK_WORDS * 4
-};
+ * 名字: 两个任务在 .ioc 里的名字是 FC_TASK / NLF_TASK, 与入口函数同名。
+ *       此前叫 findcircle_TASK / nav_task (入口却是 FC_TASK / NLF_TASK),
+ *       是纯误导, 已改正。 */
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -115,19 +97,33 @@ const osThreadAttr_t gripper_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 256 * 4
 };
-/* Definitions for findcircle_TASK */
-osThreadId_t findcircle_TASKHandle;
-const osThreadAttr_t findcircle_TASK_attributes = {
-  .name = "findcircle_TASK",
+/* Definitions for FC_TASK */
+osThreadId_t FC_TASKHandle;
+const osThreadAttr_t FC_TASK_attributes = {
+  .name = "FC_TASK",
   .priority = (osPriority_t) osPriorityLow,
   .stack_size = 256 * 4
 };
-/* Definitions for nav_task */
-osThreadId_t nav_taskHandle;
-const osThreadAttr_t nav_task_attributes = {
-  .name = "nav_task",
+/* Definitions for NLF_TASK */
+osThreadId_t NLF_TASKHandle;
+const osThreadAttr_t NLF_TASK_attributes = {
+  .name = "NLF_TASK",
   .priority = (osPriority_t) osPriorityHigh,
+  .stack_size = 1024 * 4
+};
+/* Definitions for angle_Task */
+osThreadId_t angle_TaskHandle;
+const osThreadAttr_t angle_Task_attributes = {
+  .name = "angle_Task",
+  .priority = (osPriority_t) osPriorityLow,
   .stack_size = 256 * 4
+};
+/* Definitions for key_Task */
+osThreadId_t key_TaskHandle;
+const osThreadAttr_t key_Task_attributes = {
+  .name = "key_Task",
+  .priority = (osPriority_t) osPriorityNormal1,
+  .stack_size = 128 * 4
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -142,6 +138,8 @@ void ops9imu_fuction(void *argument);
 void gripper_task(void *argument);
 void FC_TASK(void *argument);
 void NLF_TASK(void *argument);
+void AC_Fuction(void *argument);
+void KEY_TASK(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -156,15 +154,8 @@ void MX_FREERTOS_Init(void) {
   /* 建系统事件队列。必须在创建任何任务之前 —— 调度器的 task_recive()
    * 依赖 systemEventQueue, 而它由本函数创建 (此前从未被调用, 故为 NULL)。 */
   task_init();
-
-
-  /* 注意: 这里**不能**发 CAN 命令。本函数在 osKernelStart() 之前执行, 而此刻
-   * pxCurrentTCB 仍是 NULL (tasks.c:337 初值, 直到第一个任务被创建才在
-   * prvAddNewTaskToDelayedList 里赋值)。can_SendCmd() → FDCAN_WaitFreeTxFifo()
-   * 在 TX FIFO 满时会调 osDelay(1), 而 osDelay 在 CMSIS-RTOS2 里对"调度器未启动"
-   * 没有任何保护, 会一路走到 vTaskDelay → prvAddCurrentTaskToDelayedList →
-   * uxListRemove(&(pxCurrentTCB->xStateListItem)) 直接 NULL 解引用 → HardFault。
-   * 使能命令改放到 StartDefaultTask 里发。 */
+  Key_Init();
+  IR_Init();
 
   /* USER CODE END Init */
 
@@ -194,13 +185,33 @@ void MX_FREERTOS_Init(void) {
   /* creation of gripper */
   gripperHandle = osThreadNew(gripper_task, NULL, &gripper_attributes);
 
-  /* creation of findcircle_TASK */
-  findcircle_TASKHandle = osThreadNew(FC_TASK, NULL, &findcircle_TASK_attributes);
+  /* creation of FC_TASK */
+  FC_TASKHandle = osThreadNew(FC_TASK, NULL, &FC_TASK_attributes);
 
-  /* creation of nav_task */
-  nav_taskHandle = osThreadNew(NLF_TASK, NULL, &nav_task_attributes);
+  /* creation of NLF_TASK */
+  NLF_TASKHandle = osThreadNew(NLF_TASK, NULL, &NLF_TASK_attributes);
+
+  /* creation of angle_Task */
+  angle_TaskHandle = osThreadNew(AC_Fuction, NULL, &angle_Task_attributes);
+
+  /* creation of key_Task */
+  key_TaskHandle = osThreadNew(KEY_TASK, NULL, &key_Task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
+
+  /* Worker 任务句柄转存 —— app/worker_task.c 的 NLF_Request() 要用
+   * nlfTaskHandle 给 NLF_TASK 发线程标志。
+   *
+   * @warning 这**不是**可选的: 此前 worker_task.c 里那两个句柄初值 NULL 且
+   *          全工程无写入, 使 `if (nlfTaskHandle != NULL)` 恒假 →
+   *          osThreadFlagsSet() 一次都没执行过 → NLF_TASK 永远阻塞在
+   *          osThreadFlagsWait, 整条流程一次也没跑起来 (2026-09-28 修)。
+   *
+   * 必须放在 USER CODE 区: 上面那些 osThreadNew 是 CubeMX 按 .ioc 生成的,
+   * 重新生成会覆盖生成区, 但保留本区。 */
+  nlfTaskHandle = NLF_TASKHandle;
+  fcTaskHandle  = FC_TASKHandle;
+
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -219,35 +230,36 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);   /* 保留原有上电动作 */
 
-  // Emm_V5_En_Control(1,1,0);
-  // Emm_V5_En_Control(2,1,0);
-  // Emm_V5_En_Control(3,1,0);
-  // Emm_V5_En_Control(4,1,0);
-  //
+  Emm_V5_En_Control(1,1,0);
+  Emm_V5_En_Control(2,1,0);
+  Emm_V5_En_Control(3,1,0);
+  Emm_V5_En_Control(4,1,0);
+  Emm_V5_En_Control(5,1,0);
   // osDelay(100);
   // Emm_V5_Vel_Control(1, 0, 50, 0, 0);
   // Emm_V5_Vel_Control(2, 0, 50, 0, 0);
   // Emm_V5_Vel_Control(3, 1, 50, 0, 0);
   // Emm_V5_Vel_Control(4, 1, 50, 0, 0);
-
-  /* ── 调度器 ──────────────────────────────────────────────────────────
-   * 架构: 驱动源 → defaultTask 调度器 → Worker 任务。
-   * 本任务只负责从系统事件队列取 Mode 并转交 NLF_TASK, 不再碰 IMU ——
-   * HWT906 的轮询已交还 FC_TASK (见 app/worker_task.c 的 FC_Task)。
-   *
-   * task_recive() 内部是 portMAX_DELAY 阻塞, 队列空时本任务挂起、不占 CPU;
-   * 下面的 osDelay(20) 只在真的收到一条命令之后才会执行。 */
-  // HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
-  // Servo_SetAngle(38);
+  // BlockBasic_LiftTo(UP,20);
+  // Emm_V5_Pos_Control(5, 1, 800, 255, 32000, 0, 0);
+  // PoseData_t p0;
+  // osDelay(2000);
+  //   locator_ops9.get_pose(&p0);
+  //   printf("[NAV] 起点 (%.3f, %.3f, %.1f deg)\r\n",
+  //          p0.x, p0.y, p0.yaw * 57.29578f);
+  //
+  //   bool ok = Nav_GoToWorld(p0.x - 1.30f, p0.y-0.5, p0.yaw-0);
+  //
+  //   printf("[NAV] ok=%d, Self_Dir=(%.3f, %.3f, %.1f deg)\r\n",
+  //          (int)ok, Self_Dir.x, Self_Dir.y, Self_Dir.yaw * 57.29578f);
   for(;;)
   {
-    // TaskCommand_t cmd = task_recive();
-    // if (cmd.k) {
-    //   NLF_Request(cmd.Mode);
-    // }
-    BPlace_SetZero();
+    TaskCommand_t cmd = task_recive();
+    if (cmd.k) {
+      NLF_Request(cmd.Mode);
+    }
+
 
     osDelay(20);
   }
@@ -274,9 +286,8 @@ void ops9imu_fuction(void *argument)
   {
     active_locator->update();
     active_locator->get_pose(&o_pose);
-    //BPlace_SetZero();
     // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
-    osDelay(10);
+    osDelay(100);
   }
   /* USER CODE END ops9imu_fuction */
 }
@@ -294,25 +305,43 @@ void gripper_task(void *argument)
   /* ── 总线初始化 ────────────────────────────────────────────────────
    * 串口助手接 huart2 (PA2/PA3, 115200) 看 printf 输出。
    * 常量见本文件 USER CODE BEGIN PD 区。 */
-//printf("hallo\r\n");
-
+  HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_4);
   if (!SCS_BusInit()) {
     /* huart5.Instance == NULL —— MX_UART5_Init() 没跑，见变更记录 V1.10.0 备注 2 */
     printf("[scs] bus init FAIL: huart5 not initialized\r\n");
     for (;;) { osDelay(100); }
   }
-  printf("[scs] bus init SUCSESS: huart5 initialized\r\n");
+  while (!BPlace_SetZero());
+  printf("[scs] init SUCSESS: huart5 initialized\r\n");
   Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
-
+  Servo_SetAngle(40);
+  for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
+    servo_set_pos(id, SCS_CLOSE);
+    osDelay(1000);
+  }
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
+    osDelay(1000);
   }
+  // for (uint8_t i =1;i<=BLOCK_TURNTABLE_POS_COUNT;i++)
+  // {
+  //   BlockBasic_TurntableTo(i);
+  //   osDelay(200);
+  // }
+  int raw[5] ;
+  osDelay(500);
 
 
   for (;;)
   {
-
-    osDelay(20);
+    // uint8_t id =IR_ObjectEntered();
+    for (uint8_t i=SERVO_ID_SCS0009_MIN;i<=SERVO_ID_SCS0009_MAX;i++)
+    {
+      raw[i-SERVO_ID_SCS0009_MIN]=Scs0009_ReadRaw(i);
+      osDelay(100);
+    }
+    printf("%d,%d,%d,%d,%d\r\n",raw[0],raw[1],raw[2],raw[3],raw[4]);
+    osDelay(200);
   }
   /* USER CODE END gripper_task */
 }
@@ -351,10 +380,58 @@ void NLF_TASK(void *argument)
   for(;;)
   {
     NLF_Fuction();
-
     osDelay(10);
   }
   /* USER CODE END NLF_TASK */
+}
+
+/* USER CODE BEGIN Header_AC_Fuction */
+/**
+* @brief Function implementing the AC_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_AC_Fuction */
+void AC_Fuction(void *argument)
+{
+  /* USER CODE BEGIN AC_Fuction */
+  /* Infinite loop */
+  // MecanumResult cmd = Mecanum_Calc(0.2,0);
+  for(;;)
+  {
+    Angle_Fuction();
+    osDelay(5);
+    // Send_commandmotor(&cmd);
+  }
+  /* USER CODE END AC_Fuction */
+}
+
+/* USER CODE BEGIN Header_KEY_TASK */
+/**
+* @brief Function implementing the key_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_KEY_TASK */
+void KEY_TASK(void *argument)
+{
+  /* USER CODE BEGIN KEY_TASK */
+
+  for(;;)
+  {
+    Key_Update();
+
+    /* 用 Key_WasPressed (边沿, 读后清) 而不是 Key_IsPressed (电平):
+     * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
+    // if (Key_WasPressed(KEY_START))
+    // {
+    //   printf("[KEY] 启动键 -> NLF_Request(Event_Navigation)\r\n");
+    //   NLF_Request(Event_Navigation);
+    // }
+
+    osDelay(10);
+  }
+  /* USER CODE END KEY_TASK */
 }
 
 /* Private application code --------------------------------------------------*/

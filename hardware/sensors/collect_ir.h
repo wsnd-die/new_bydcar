@@ -11,7 +11,7 @@
 /* 红外对射开关引脚 (按实际接线修改) */
 #define IR_PORT    GPIOF
 #define IR_PIN     GPIO_PIN_10
-#define IR_ACTIVE  0        /* 实测: 遮挡=低电平(GPIO_RESET), 未遮挡=高电平; 故 0=遮光低电平=检测到 */
+#define IR_ACTIVE  1        /* 实测: 遮挡=低电平(GPIO_RESET), 未遮挡=高电平; 故 0=遮光低电平=检测到 */
 
 void          IR_Init(void);
 bool          IR_ObjectPresent(void);   /* 当前是否有物体遮光 */

@@ -11,7 +11,7 @@
 
 /* 默认参数 */
 #define CFG_MAX_W       3.0f
-#define CFG_MAX_W_DEG   180.0f
+#define CFG_MAX_W_DEG   10.0f
 #define CFG_YAW_TOL     1.0f   /* 修严: 角度环实际修到 ~1° 再判到位, 否则导航等 4°/2° 会干等满 guard */
 
 static float norm_deg(float d)
@@ -64,16 +64,16 @@ void Angle_Init(AngleCtrl *ac)
     ac->yaw_tol = CFG_YAW_TOL;
 
     /* 角度环 */
-    const fp32 ak[3] = { 2.0f, 0.0f, 0.001f };
+    const fp32 ak[3] = { 0.1f, 0.0f, 0.002f };
     PID_init(&ac->pid_angle, PID_POSITION, ak, CFG_MAX_W_DEG, 30.0f);
 
     /* 角速度环 */
-    const fp32 wk[3] = { 0.018f, 0.01f, 0.001f };
+    const fp32 wk[3] = { 1.0f, 0.1f, 0.02f };
     PID_init(&ac->pid_w, PID_POSITION, wk, CFG_MAX_W, 0.4f);
 
     /* 陀螺仪滤波 */
-    ac->gyro_alpha    = 0.14f;
-    ac->gyro_deadband = 0.15f;
+    ac->gyro_alpha    = 0.2f;
+    ac->gyro_deadband = 8.15f;
     ac->gyro_scale    = 0.05f;
     ac->gyro_filt     = 0.0f;
 }

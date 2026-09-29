@@ -63,6 +63,18 @@ extern "C" {
 /** 发送超时（ms）。一帧最长 128 字节，1M 波特率下约 1.3ms。 */
 #define SCS_UART_TX_TIMEOUT_MS  100U
 
+#define SERVO_ID_STS3032      1      /* STS3032, SMS_STS 系列 */
+#define SERVO_ID_SCS0009_MIN  2      /* SCS0009, SCSCL 系列 */
+#define SERVO_ID_SCS0009_MAX  6
+
+#define STS_CENTER     0    /* STS3032: 0~4095 的中位（当前无调用者） */
+#define STS_SPEED       0    /* 原始寄存器值，单位见 STS3032 数据手册 */
+#define STS_ACC         0      /* 原始寄存器值，0 = 不控加速度直冲最高速 */
+#define SCS_CLOSE     450     /* SCS0009: 0~1024 的中位（0.293°/步，全行程 300°） */
+#define SCS_OPEN      620
+#define SCS_SPEED       0    /* 原始寄存器值，0 = 用寄存器内部值 */
+#define SCS_TIME        0       /* 0 = 用寄存器内部值 */
+
 /**
  * 接收超时（ms），**单字节**语义。
  * @warning 这是失败路径的代价：舵机不在线时，协议层 checkHead() 读第一个字节
@@ -279,6 +291,31 @@ int SCS_EnableTorque(uint8_t id, uint8_t enable);
 int SCS_ReadPos(int id);
 /** @brief 读移动状态。id>=0 走总线，id=-1 取 FeedBack 缓冲区；失败返回 -1。 */
 int SCS_ReadMove(int id);
+
+/**
+ * @brief  读 SCS0009（SCS/CL 系列，本工程 ID 2~6）的当前位置。
+ * @param  id  舵机 ID（2~6）。
+ * @retval 原始位置 0~1024（10 位编码器 ↔ 0~300°，中位 500）；失败返回 -1。
+ *
+ * @note   角度换算：`deg = raw / 1024.0f * 300.0f`。
+ * @note   失败原因看 `SCS_GetLastError()`：`1`=无应答 / `2`=校验和不符 /
+ *         `3`=从机 ID 不符 / `4`=长度不符。
+ *         **若恒为 3，说明接收丢了同步**（读到的是上一帧那颗舵机的应答）——
+ *         机理与应对见 `servo_scs.c` 里 `ftBus_Delay()` 的说明。
+ *
+ * @note   本函数**不需要先调 `SCS_SetEnd()`**：它在总线互斥锁**内部**把字节序切成
+ *         大端（SCS/CL 系列所需）再读，因此不会被别的系列的写命令插队翻掉。
+ *         这也是它没有直接复用 `SCS_ReadPos(id)` 的原因 —— 那个函数要求调用方
+ *         自己声明字节序，而 `SCS_SetEnd()` 与 `SCS_ReadPos()` 是两次独立取锁。
+ *
+ * @note   只读寄存器 56 的 **2 字节**（回帧 8 字节），没有走 `SCS_FeedBack()` 的
+ *         15 字节批量读 —— 收帧越短越不容易被抢占打断而丢同步（G4 的 UART
+ *         没有 RX FIFO）。想一次取回速度/电压/温度等多个量时再用 `SCS_FeedBack()`。
+ *
+ * @warning 阻塞在总线往返上（最长 `SCS_UART_RX_TIMEOUT_MS` = 100ms），
+ *          不要在控制环里调。
+ */
+int Scs0009_ReadRaw(uint8_t id);
 /**
  * @brief  一次性回读全部反馈量到厂商库的静态缓冲区。
  * @param  id  目标舵机 ID。

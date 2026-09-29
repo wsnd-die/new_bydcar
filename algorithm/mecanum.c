@@ -71,10 +71,10 @@ MecanumResult Mecanum_Calc(float v, float w)
      * ω_3 = V - geo_factor * w    后左
      * ω_4 = V + geo_factor * w    后右
      */
-    float fl_raw = ( v - geo_factor * w) * MEC_SPEED_COEFF;
-    float fr_raw = ( v + geo_factor * w) * MEC_SPEED_COEFF;
-    float rl_raw = ( v - geo_factor * w) * MEC_SPEED_COEFF;
-    float rr_raw = ( v + geo_factor * w) * MEC_SPEED_COEFF;
+    float fl_raw = ( v + geo_factor * w) * MEC_SPEED_COEFF;
+    float fr_raw = ( v - geo_factor * w) * MEC_SPEED_COEFF;
+    float rl_raw = ( v + geo_factor * w) * MEC_SPEED_COEFF;
+    float rr_raw = ( v - geo_factor * w) * MEC_SPEED_COEFF;
 
     /* 低速动力补偿 */
     if (fabsf(v) < MEC_LOW_SPEED_LIMIT) {
@@ -117,13 +117,7 @@ MecanumResult Mecanum_Calc_Full_V(float vx, float vy, float w)
     }
     /* 几何因子 a + b */
     float geo_factor = MEC_TRACK_WIDTH / 2.0f + MEC_WHEELBASE / 2.0f;
-    /* ---------- 全自由度逆运动学 ----------
-     * ω_i = (Vx ∓ Vy ∓ (a+b)·ω) × SPEED_COEFF
-     *
-     * 辊子方向（标准麦轮布局）：
-     *   前左 / 后右 : \ 型（Vsy 项取 -Vy）
-     *   前右 / 后左 : / 型（Vsy 项取 +Vy）
-     */
+
     float fl_raw = ( vx - vy - geo_factor * w) * MEC_SPEED_COEFF;
     float fr_raw = ( vx + vy + geo_factor * w) * MEC_SPEED_COEFF;
     float rl_raw = ( vx + vy - geo_factor * w) * MEC_SPEED_COEFF;
@@ -153,25 +147,9 @@ MecanumResult Mecanum_Calc_Full_V(float vx, float vy, float w)
  *  两处必须保持一致, 改动任何一边都要同步另一边。
  * ================================================================ */
 
-void Mecanum_Vel_Execute(const MecanumResult *res)
-{
-    if (res == NULL)
-        return;
-
-    Emm_V5_Vel_Control(1, !res->fr_dir, res->fr_speed, 0, 0); /* 1号=前右 */
-    Emm_V5_Vel_Control(2,  res->rl_dir, res->rl_speed, 0, 0); /* 2号=后左 */
-    Emm_V5_Vel_Control(3, !res->fl_dir, res->fl_speed, 0, 0); /* 3号=前左 */
-    Emm_V5_Vel_Control(4,  res->rr_dir, res->rr_speed, 0, 0); /* 4号=后右 */
-    osDelay(5);
-    Emm_V5_Synchronous_motion(0);
-}
 
 uint32_t malu_cm_topluse_s(float cm)
 {
-    /* 脉冲 = 厘米 / 周长(2πR) × 每圈脉冲数
-     * 注意周长是 2πR 不是 πR, 之前漏了 ×2 会多算一倍脉冲 */
-    /* 用带 f 后缀的字面量而非 <math.h> 的 M_PI: M_PI 是 double, 会让整个
-     * 表达式提升为双精度运算, 既变慢又改变舍入。此值与 CMSIS-DSP 的 PI 一致。 */
     return (uint32_t)(cm / (2.0f * MEC_WHEEL_RADIUS * 3.14159265358979f) * 3200);
 }
 
@@ -274,25 +252,7 @@ uint8_t Mecanum_Read_AllPositions(EncoderData *enc, uint32_t timeout_ms)
     return 1;
 }
 
-/* ================================================================
- *  编码器脉冲 → 毫米
- *
- *  唯一的换算口 —— device/drv_wheel_odom.c 的 wheel_odom_update() 每次
- *  推算都经此把脉冲转成 mm。
- *
- *  V1.14.0 动作：原实现在此之前还有一整块「里程计自动标定」（以 TBOP
- *  定位器为基准反推 scale_x/scale_y 的状态机），已整块移除。理由有二：
- *    · 三个入口函数（Calib_Start / Calib_Update / Is_Calibrated）全工程
- *      零调用，是死代码；
- *    · 它让业务层直接 include 硬件层的 uart2_tbop10.h 并读 TB_position
- *      全局量，违反 CLAUDE.md §5.2.3 的跨层约束。
- *
- *  本函数随之剥离：原实现分「已标定用 scale_x/scale_y」与「未标定用粗略
- *  估算」两条路径，而 g_calib.state 恒为 CALIB_IDLE（状态机从无入口），
- *  标定那条**在此之前就不可达**。故只保留下面这条，数值与删除前逐位一致。
- *
- *  粗略估算: R=3.75cm(轮径≈75mm), 3200脉冲/圈
- *  注意 MEC_WHEEL_RADIUS 单位是 cm, 所以 rough 单位是 cm/脉冲 */
+
 void Odometry_Apply_Calib(float enc_dx, float enc_dy, float *mm_x, float *mm_y)
 {
     float rough = (2.0f * 3.14159265f * MEC_WHEEL_RADIUS) / 3200.0f;

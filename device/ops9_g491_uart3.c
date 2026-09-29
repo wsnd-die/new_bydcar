@@ -441,20 +441,37 @@ static void ops9_loc_init(void)
  * @note  这是【有副作用】的接口，必须固定周期调用且全局只调一处。
  *        无新帧时检查帧流超时；超时置 valid=0 并冻结位姿，绝不外推。
  *
- * 坐标映射：此处按直通映射（x/y 即 OPS9 输出坐标，yaw 即 OPS9 heading）。
- * OPS9 的 heading 正方向与安装方位未经上车实测，若与车体系约定
- * （X=前方、Y=左方、yaw CCW 为正，CLAUDE.md 第 3 节）不一致，
- * 只需调整本函数内的符号与轴对应，不影响上层。
+ * 坐标映射：OPS9 的原始坐标系与工程约定（X=前方、Y=左方、yaw CCW 为正，
+ * CLAUDE.md 第 3 节）**差一个 −90° 旋转**，本函数负责换算掉，上层拿到的
+ * x/y/yaw 永远是工程约定下直接可用的量。
+ *
+ * 实测（2026-09-28, 手推车标定, 用户提供）：
+ *     往车头方向推 → OPS9 的 y 增大
+ *     往左推       → OPS9 的 x 减小
+ *     逆时针转     → OPS9 的 yaw 增大
+ *
+ * 由此得映射（下标 _o = OPS9 原始, _w = 工程约定）：
+ *     x_w   =  y_o
+ *     y_w   = -x_o
+ *     yaw_w = yaw_o          ← 不变号
+ *
+ * det([[0,1],[-1,0]]) = +1 —— 是**纯旋转**不是镜像，所以 yaw 不需要反号。
+ * 这与"逆时针 = yaw 增大"和工程约定"CCW 为正"方向一致是同一件事的两面。
+ * pitch / roll 只绕 Z 换算, 不受影响, 原样透传。
+ *
+ * @warning yaw 的**零点未标定**：还不知道 OPS9 的 heading=0 对应车头的哪个
+ *          物理朝向。要绝对航向（"车头朝世界 +X"）得先测出零偏，在这里补一个
+ *          常量偏移；只要求"保持当前朝向"的用法不受影响。
  */
 static void ops9_loc_update(void)
 {
     ops9_data_t raw;
 
     if (OPS9_G491_UART3_GetLatest(&raw)) {
-        /* 单位换算：mm→m、度→rad（PoseData_t 契约，CLAUDE.md 第 3 节） */
-        s_pose.x     = raw.x_mm / 1000.0f;
-        s_pose.y     = raw.y_mm / 1000.0f;
-        s_pose.yaw   = raw.heading_deg * OPS9_DEG2RAD;
+        /* 单位换算 mm→m / 度→rad + 坐标系换算（见函数头说明） */
+        s_pose.x     =  raw.y_mm / 1000.0f;
+        s_pose.y     = -raw.x_mm / 1000.0f;
+        s_pose.yaw   =  raw.heading_deg * OPS9_DEG2RAD;
 
         /* yaw 归一化到 [-π, π] */
         while (s_pose.yaw >  OPS9_PI) { s_pose.yaw -= 2.0f * OPS9_PI; }

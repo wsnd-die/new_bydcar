@@ -50,13 +50,18 @@ extern "C" {
  *
  * FC_TASK 很浅: 只有几个局部标量, AngleCtrl 实例是 static 的, 不在栈上。
  *
- * NLF_TASK 要跑整条调用链 —— NLF_RunFlow → Nav_RunWaypoints → Nav_GoToWorld
- * → Mecanum_MoveWithEncoder → Send_commandmotor, 且沿途多处调用 printf
- * (Mecanum_Move.c / NavigationMecanum.c 等)。
- * newlib-nano 带 -u _printf_float 时, 一次 printf 就要几百字节栈,
- * 所以这里给足 4KB, 不要按"只放局部变量"估。 */
-#define FC_TASK_STACK_WORDS     256u     /* 1 KB  */
-#define NLF_TASK_STACK_WORDS    1024u    /* 4 KB  */
+ * NLF_TASK 要跑整条调用链 —— NLF_RunFlow → Nav_GoToWorld / Place /
+ * TT_RotateByQR → BlockBasic_TurntableTo → SCS 总线, 且沿途多处调用 printf。
+ * newlib-nano 带 -u _printf_float 时, 一次 printf 就要几百字节栈;
+ * servo_scs.h 另要求 SCS 调用方留 ≥1KB 余量。故给足 4KB,
+ * 不要按"只放局部变量"估。
+ *
+ * @warning **这两个宏已不是栈深的生效处** (2026-09-28 起)。
+ *          任务由 CubeMX 按 .ioc 的 FREERTOS.Tasks01 创建, 栈深以那里为准;
+ *          此前 NLF_TASK 实际只拿到 1KB, 与本文件声明的 4KB 不符, 已改正。
+ *          改栈深请改 .ioc, 并回来同步这两个值以免误导。 */
+#define FC_TASK_STACK_WORDS     256u     /* 1 KB  (对应 .ioc: FC_TASK,256) */
+#define NLF_TASK_STACK_WORDS    1024u    /* 4 KB  (对应 .ioc: NLF_TASK,1024) */
 
 /* NLF_TASK 的线程标志 */
 #define NLF_FLAG_RUN            0x01u
@@ -119,8 +124,22 @@ void NLF_Request(SystemMode_t mode);
 /**
  * @brief  流程主体 —— 由 NLF_TASK 在收到事件后调用。
  * @param  mode  要执行的流程。
- * @note   各 Mode 的执行体已存在, 但**整条流程的顺序编排尚未确定**,
- *         见 worker_task.c 中的说明与 CLAUDE.md 变更日志 V1.4.0。
+ *
+ * @note  2026-09-28 起这里已是**完整的比赛流程编排**, 不再是空壳:
+ *
+ *            Event_Navigation  中继站, 查顺序表派发下一阶段
+ *            Event_LinFolL     左循迹/收集物块   [打桩中]
+ *            Event_FindCircle  找圆 → 放一个物块
+ *            Event_LinFolR     右循迹/收集奖杯   [打桩中]
+ *            Event_PlaceDown   放一个奖杯
+ *            Event_GoHome      回家停车
+ *
+ *        顺序表与硬编码默认值在 worker_task.c 的 4.1 / 4.2 两节。
+ *        不扫二维码, 奖杯顺序与槽位颜色暂由硬编码顶上, 等 NX 报文接入
+ *        (每个表上都标了「★ NX 接入点」)。
+ *
+ * @warning 本函数**阻塞式**: 一个阶段跑完才返回 (找圆阶段有 30s 上限)。
+ *          FC_TASK / angle_Task 必须能抢占它, 否则控制周期被拉长。
  */
 void NLF_RunFlow(SystemMode_t mode);
 
