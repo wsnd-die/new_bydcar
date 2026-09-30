@@ -287,6 +287,7 @@ void ops9imu_fuction(void *argument)
     active_locator->update();
     active_locator->get_pose(&o_pose);
     // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+
     osDelay(100);
   }
   /* USER CODE END ops9imu_fuction */
@@ -340,7 +341,7 @@ void gripper_task(void *argument)
       raw[i-SERVO_ID_SCS0009_MIN]=Scs0009_ReadRaw(i);
       osDelay(100);
     }
-    printf("%d,%d,%d,%d,%d\r\n",raw[0],raw[1],raw[2],raw[3],raw[4]);
+    //printf("%d,%d,%d,%d,%d\r\n",raw[0],raw[1],raw[2],raw[3],raw[4]);
     osDelay(200);
   }
   /* USER CODE END gripper_task */
@@ -380,7 +381,7 @@ void NLF_TASK(void *argument)
  // Nav_GoToWorld(1.0f,0,0);
   for(;;)
   {
-  // NLF_Fuction();
+    NLF_Fuction();
 
     osDelay(10);
   }
@@ -428,7 +429,6 @@ void KEY_TASK(void *argument)
     if (Key_WasPressed(KEY_START))
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Navigation)\r\n");
-      printf("%.5f,%.5f,%.5f",);
       NLF_Request(Event_Navigation);
     }
 
