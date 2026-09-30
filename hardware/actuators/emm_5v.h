@@ -45,7 +45,7 @@ void Emm_V5_Origin_Interrupt(uint8_t addr); // ǿ���жϲ��˳����
 
 uint8_t Emm_V5_Read_Status(uint8_t id, uint8_t *status, uint32_t timeout_ms);
 uint8_t Emm_V5_Is_Reached(uint8_t id);
-
+void Print_can_error_count(void);
 #endif
 
 

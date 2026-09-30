@@ -268,7 +268,14 @@ uint8_t fdcan2_recover(void)
     return 1;
 }
 
+void Print_can_error_count(void) {
 
+    printf("CANfail step=1 PSR=%08lX TEC=%lu cnt=%lu\r\n",
+         (unsigned long)FDCAN2->PSR,
+         (unsigned long)(FDCAN2->ECR & FDCAN_ECR_TEC),
+         (unsigned long)can_error_count);
+
+}
 
 
 

@@ -129,7 +129,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     /* 2. x/y 轴用 pid_type_def (Ki=0 即 PD, PID_POSITION 位置式)。
      *    yaw 不用它: PID_calc 内部误差不 wrap, 跨 ±π 会跳 2π, 手写。 */
     pid_type_def pid_x, pid_y;
-    fp32 k[3] = {1.3f, 0.0f, 0.1f};
+    fp32 k[3] = {1.3f, 0.0f, 0.91f};
     PID_init(&pid_x, PID_POSITION, k, NAV_VMAX_XY, 0.0f);
     PID_init(&pid_y, PID_POSITION, k, NAV_VMAX_XY, 0.0f);
 

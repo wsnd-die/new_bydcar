@@ -237,10 +237,17 @@ void StartDefaultTask(void *argument)
   Emm_V5_En_Control(4,1,0);
   Emm_V5_En_Control(5,1,0);
   // osDelay(100);
-  // Emm_V5_Vel_Control(1, 0, 50, 0, 0);
-  // Emm_V5_Vel_Control(2, 0, 50, 0, 0);
-  // Emm_V5_Vel_Control(3, 1, 50, 0, 0);
-  // Emm_V5_Vel_Control(4, 1, 50, 0, 0);
+  // for (;;) {
+  //   Emm_V5_Vel_Control(1, 0, 50, 0, 0);
+  //   Emm_V5_Vel_Control(2, 0, 50, 0, 0);
+  //   Emm_V5_Vel_Control(3, 1, 50, 0, 0);
+  //   Emm_V5_Vel_Control(4, 1, 50, 0, 0);
+  //
+  //   osDelay(20);
+  //   Emm_V5_Synchronous_motion(0);
+  //   Print_can_error_count();
+  // }
+
   // BlockBasic_LiftTo(UP,20);
   // Emm_V5_Pos_Control(5, 1, 800, 255, 32000, 0, 0);
   // PoseData_t p0;
