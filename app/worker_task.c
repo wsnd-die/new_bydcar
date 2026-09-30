@@ -28,36 +28,18 @@
 volatile uint8_t g_angle_ctrl_enable = 0;    /* 1 = 打开角度环 */
 volatile float   g_angle_target_yaw  = 0.0f; /* 目标航向 (deg), 与 g_hwt_imu_yaw 同量纲 */
 
-/* V1.13.0 追加。默认 0 → FC_TASK 行为与前版一致 (纯原地转向)。 */
-volatile float   g_angle_ctrl_speed  = 0.0f; /* 目标线速度 m/s, >0 前进 */
-volatile float   g_angle_ctrl_w_ff   = 0.0f; /* 前馈角速度 rad/s, CCW 为正 */
 
 osThreadId_t fcTaskHandle  = NULL;
 osThreadId_t nlfTaskHandle = NULL;
 
-/* 角度环状态。AngleCtrl 约 230 字节, 放 static 不放栈上。 */
+
 static AngleCtrl s_fc;
 
-/* 调度器 → NLF_TASK 的事件暂存。
- * 同一时刻只跑一条流程, 且调度器先写 Mode 再置标志, 故无需再加一层队列。 */
 static volatile SystemMode_t s_nlf_pending = Event_STOP;
 
-/* ==================================================================
- * 二、工具
- * ================================================================== */
-
-/* 实例输出 rad，角度环按 deg 工作（angle_ctrl.h），量纲在此换算 */
 #define RAD2DEG(r) ((r) * 57.2957795131f)
 
-/* ==================================================================
- * 三、FC_TASK —— 角度环
- * ================================================================== */
 
-/**
- * @brief 关闭角度环时的主动刹停。
- * @note  发送零速而不是"什么都不发": 闭环步进电机在速度模式下会一直执行
- *        最后一次收到的目标速度。Mecanum_Calc(0,0) 四轮速度均为 0。
- */
 static void AG_Stop(void)
 {
     MecanumResult zero = Mecanum_Calc(0.0f, 0.0f);
@@ -90,14 +72,13 @@ void Angle_Fuction(void)
             }
 
             Angle_Update(&s_fc, yaw, w_deg);
-            MecanumResult cmd = Mecanum_Calc(g_angle_ctrl_speed,
-                                             s_fc.cmd_w + g_angle_ctrl_w_ff);
+            MecanumResult cmd = Mecanum_Calc(0,
+                                             s_fc.cmd_w );
 
             Send_commandmotor(&cmd);
         }
         else if (was_on)
         {
-            /* 下降沿: 刹停, 让调用方的 osDelay(20) 有意义 */
             AG_Stop();
             s_fc.state = ANGLE_IDLE;
             was_on = 0;
@@ -210,29 +191,16 @@ static const Color_TypeDef NF_SLOT_COLORS[NF_TASK1_SLOT_COUNT] = {
  * 4.2  流程顺序表与状态
  * ================================================================== */
 
-/** 顺序表的一项: 跑哪个阶段、连跑几次。
- *  对应旧 NLF_TASK 的 Navafter_mode[] / NavafterNum[] 两张平行数组 ——
- *  这里合成了一个结构体, 免得两数组长度对不上。 */
+
 typedef struct {
     SystemMode_t mode;
     uint8_t      times;
 } NF_Stage_t;
 
 
-/* ==================================================================
- * ⚠⚠【临时改动 2026-09-28 —— 正在单独测分点导航, 测完必须改回来】⚠⚠
- *
- * 换成单站表后, 每个中继站都再派发一次 Navigation, 于是 NLF_TASK 一次循环
- * 走**一个**路径点, 走完整张表后自动 GoHome。好处是不受循迹打桩、
- * 找圆 30s 超时这些噪声干扰, 能单独验证 Nav_FeDuanPoint() 的推进和
- * g_waypoints[] 里的坐标。
- *
- * 恢复办法: 删掉下面这张单站表, 把 #if 0 改成 #if 1 (或直接删掉那两行)。
- *
- * @note 用 #if 0 而不是块注释包住原表 —— 原表里本来就有块注释, 嵌套会炸。
- * ================================================================== */
+
 static const NF_Stage_t NF_STAGES[] = {
-    { Event_Navigation, 30u },   /* 足够走完 17 个点, 多出来的次数空转 */
+    { Event_Navigation, 30u },
 };
 #define NF_STAGE_COUNT  (sizeof(NF_STAGES) / sizeof(NF_STAGES[0]))
 
@@ -346,7 +314,7 @@ static void NF_Stage_LinFolL(void)
     printf("[FLOW-STUB] LinFolL (左循迹/收集物块) 未接线, 直接跳过\r\n");
 
     AG_Stop();
-    Nav_CalibrateAfterTrace(false);     /* TODO: 打桩 */
+    Nav_CalibrateAfterTrace(false);
     NLF_Request(Event_Navigation);
 }
 

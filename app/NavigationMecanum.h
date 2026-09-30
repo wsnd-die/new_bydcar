@@ -47,10 +47,10 @@ extern World_Dir_t Self_Dir;
 #define NAV_TIMEOUT_MS         10000u  /* 单点超时 ms */
 #define NAV_KP_XY              1.2f    /* 平移 P: 0.4m 误差 → 0.4 m/s */
 #define NAV_KD_XY              0.0f    /* 平移 D: 首版关 (OPS9 噪声放大风险) */
-#define NAV_KP_YAW             2.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
-#define NAV_KD_YAW             0.0f    /* 航向 D: 首版关 */
+#define NAV_KP_YAW             4.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
+#define NAV_KD_YAW             0.3f    /* 航向 D: 首版关 */
 #define NAV_VMAX_XY            1.6f    /* 平移速度限幅 m/s */
-#define NAV_VMAX_W             1.5f    /* 角速度限幅 rad/s */
+#define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
 #define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
 #define NAV_TOL_XY             0.02f   /* 到达容差 3cm */

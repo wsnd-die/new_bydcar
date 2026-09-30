@@ -1,26 +1,4 @@
-/**
- * @file    NavigationMecanum.c
- * @brief   世界系位置闭环 —— OPS9 位姿反馈 → 三轴 PD → 电机速度环
- *
- *  控制链:
- *     目标 (tx, ty, tyaw) ─┬─ x/y 轴 pid_type_def (Ki=0, 即 PD)
- *                         └─ yaw 轴手写 PD (误差须 wrap 到 ±π)
- *          世界系期望速度 → 软启动加速度斜坡 (缓启动)
- *          → 世界→车体旋转 (当前 yaw)
- *          → Mecanum_Calc_Full_V(vx, vy, w) 逆解
- *          → Send_commandmotor() 下发电机速度环 (Emm_V5_Vel_Control)
- *
- *  运行环境: 阻塞式流程任务上下文 (NLF_TASK 的 NLF_RunFlow, 以及
- *  gripper_task 里 Place() 调 Nav_MoveBody 的那条路), 100Hz (osDelay(10))。
- *  与角度环的电机控制权契约见 worker_task.c 文件头:
- *  入口先置 g_angle_ctrl_enable = 0 并 osDelay(20), 等角度环下降沿零速,
- *  此后本文件独占电机命令 —— 但**退出时不把该标志恢复成 1**, 见 Nav_GoToWorld。
- *
- *  反馈源: locator_ops9 (device/ops9_g491_uart3.c), 世界系 x/y/yaw,
- *  单位 m / rad。update() 由 ops9imu_fuction 任务每 100ms 调一次
- *  (app_freertos.c 的 osDelay(100); 驱动侧帧超时 OPS9_FRAME_TIMEOUT_MS=500ms),
- *  本文件只调 get_pose() (GetLatest 是消费式读取, 多调 update 会抢帧)。
- */
+
 #include "Common_used.h"          /* libc + HAL + FreeRTOS + osDelay */
 #include "NavigationMecanum.h"
 #include "mecanum.h"              /* MecanumResult / Mecanum_Calc_Full_V / Mecanum_Vel_Execute */
@@ -37,20 +15,7 @@
 
 World_Dir_t Self_Dir = {0.0f, 0.0f, 0.0f};
 
-/* ==================================================================
- * 分点导航路径点表 (世界坐标系, 单位 m / rad)
- *
- * 坐标是 2026-09-28 现场示教值 (手推车到每个物理点, 读 locator_ops9.get_pose
- * 记录); 2026-09-30 重新示教更新 9~16 点 (V1.19.6)。yaw 一律是**弧度**,
- * 直接取自 OPS9, 不要再乘 NAV_DEG2RAD。
- *
- * ⚠ 配合 worker_task.c 的 NF_AUTOSTART=1, 这张表就是"上电即发车"的路线。
- *   改表前后务必确认车周围清空。
- *
- * @note 表内每行右边是示教时记的物理点名字 (现场命名, 与比赛场地的
- *       a~e / 二维码点 / 放置点对应)。示教顺序即行驶顺序。
- * @note 改完记得把 g_waypoint_count 同步成实际行数。
- * ================================================================== */
+
 World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   0.38503f,-1.20312f,-0.76168f }, /*  1 奖杯二维码点 */
     {   0.71070f,-1.46381f,-0.26075f }, /*  2 亚军点 */
@@ -135,7 +100,6 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
     /* 3. 软启动斜坡状态 (世界系) */
     float vx_cmd = 0.0f, vy_cmd = 0.0f, w_cmd = 0.0f;
-    float prev_eyaw = 0.0f;
 
     uint32_t t0 = osKernelGetTickCount();
     uint8_t  arrive  = 0u;   /* 连续到达 tick 数 */
@@ -168,14 +132,13 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             /* PD 输出 = 世界系期望速度 (m/s / rad/s) */
             float vx_w = PID_calc(&pid_x, pose.x, target_x);
             float vy_w = PID_calc(&pid_y, pose.y, target_y);
-            float w_w  = NAV_KP_YAW * eyaw + NAV_KD_YAW * (eyaw - prev_eyaw);
-            prev_eyaw = eyaw;
+            float w_w  = NAV_KP_YAW * eyaw - NAV_KD_YAW * pose.wz;
             w_w = NAV_Clamp(w_w, -NAV_VMAX_W, NAV_VMAX_W);
 
             /* 软启动: 三轴独立加速度斜坡 (缓启动) */
             vx_cmd = NAV_Ramp(vx_cmd, vx_w, NAV_ACC_XY, NAV_DT);
             vy_cmd = NAV_Ramp(vy_cmd, vy_w, NAV_ACC_XY, NAV_DT);
-            w_cmd  = NAV_Ramp(w_cmd,  w_w,  NAV_ACC_W,  NAV_DT);
+            w_cmd  = w_w;
 
             /* 世界 → 车体 (BollLocator.c:203-207 同式, 用当前 yaw) */
             float c = cosf(pose.yaw), s = sinf(pose.yaw);
