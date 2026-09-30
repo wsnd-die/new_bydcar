@@ -61,7 +61,7 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   1.855496f,  1.132472f,  2.191320f }, /*  8 c 点 */
     {   1.517152f,  1.423086f,  2.705060f }, /*  9 d 点 */
     {   1.077295f,  1.484286f,  3.134072f }, /* 10 a 点 */
-    {   0.619106,1.325792,-2.544706      }, /* 11 b 点 ← ⚠ 仍是旧占位值, 待示教 */
+    {   0.619106f,1.325792f,-2.544706f     }, /* 11 b 点 ← ⚠ 仍是旧占位值, 待示教 */
     {   1.002958f, -0.372130f, -1.650208f }, /* 12 e 点 */
     {   0.864636f,  0.124412f, -1.390370f }, /* 13 c 点 */
     {   0.983620f,  0.128080f, -0.876166f }, /* 14 d 点 */
@@ -125,7 +125,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     /* 2. x/y 轴用 pid_type_def (Ki=0 即 PD, PID_POSITION 位置式)。
      *    yaw 不用它: PID_calc 内部误差不 wrap, 跨 ±π 会跳 2π, 手写。 */
     pid_type_def pid_x, pid_y;
-    fp32 k[3] = {NAV_KP_XY, 0.0f, NAV_KD_XY};
+    fp32 k[3] = {1.3f, 0.0f, 0.1f};
     PID_init(&pid_x, PID_POSITION, k, NAV_VMAX_XY, 0.0f);
     PID_init(&pid_y, PID_POSITION, k, NAV_VMAX_XY, 0.0f);
 

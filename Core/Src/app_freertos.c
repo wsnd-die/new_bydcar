@@ -257,7 +257,7 @@ void StartDefaultTask(void *argument)
   {
     TaskCommand_t cmd = task_recive();
     if (cmd.k) {
-      NLF_Request(cmd.Mode);
+
     }
 
 
@@ -377,9 +377,11 @@ void NLF_TASK(void *argument)
 {
   /* USER CODE BEGIN NLF_TASK */
   /* Infinite loop */
+ // Nav_GoToWorld(1.0f,0,0);
   for(;;)
   {
-    NLF_Fuction();
+  // NLF_Fuction();
+
     osDelay(10);
   }
   /* USER CODE END NLF_TASK */
@@ -423,11 +425,12 @@ void KEY_TASK(void *argument)
 
     /* 用 Key_WasPressed (边沿, 读后清) 而不是 Key_IsPressed (电平):
      * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
-    // if (Key_WasPressed(KEY_START))
-    // {
-    //   printf("[KEY] 启动键 -> NLF_Request(Event_Navigation)\r\n");
-    //   NLF_Request(Event_Navigation);
-    // }
+    if (Key_WasPressed(KEY_START))
+    {
+      printf("[KEY] 启动键 -> NLF_Request(Event_Navigation)\r\n");
+      printf("%.5f,%.5f,%.5f",);
+      NLF_Request(Event_Navigation);
+    }
 
     osDelay(10);
   }

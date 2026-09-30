@@ -58,6 +58,7 @@ void ops9_init(ops9_t *ctx, ops9_frame_callback_t frame_cb, void *user)
     ctx->state = OPS9_RX_WAIT_HEAD_0D;
     ctx->frame_cb = frame_cb;
     ctx->frame_cb_user = user;
+    OPS9_G491_UART3_SetPose(0,0,0);
 }
 
 
