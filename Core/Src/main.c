@@ -110,8 +110,10 @@ int main(void)
   MX_I2C3_Init();
   /* USER CODE BEGIN 2 */
 
-
   fdcan2_UserInit();
+
+  /* MSP 颜色芯片的接收在 app_freertos.c 的 MX_FREERTOS_Init() 里挂 (V1.20.6) ——
+   * 全工程只此一处, 这里不再重复调用。 */
 
   /* USER CODE END 2 */
 

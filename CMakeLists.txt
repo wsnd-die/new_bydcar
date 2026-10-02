@@ -63,8 +63,6 @@ set(FREERTOS_SOURCES
     ${FREERTOS_DIR}/CMSIS_RTOS_V2/cmsis_os2.c
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
     ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
-        uart/msp_uart2.c
-        uart/msp_uart2.h
         uart/NX_uart.c
         uart/NX_uart.h)
 

@@ -4,7 +4,6 @@
  */
 #include "Common_used.h"
 #include "collect_ir.h"
-#include "uart2_tbop10.h"
 
 static bool ir_last = false;   /* 上一采样是否遮挡 true=遮光 */
 
@@ -65,48 +64,9 @@ bool Collect_WaitEnter(void)
     return true;
 }
 
-Color_TypeDef Collect_ReadColor(void)
-{
-    uint32_t rs = 0, gs = 0, bs = 0;
-    int n = 0;
-    for (int i = 0; i < 40 && n < 3; i++) {
-        if (g_uart2_gy33_ready) {
-            g_uart2_gy33_ready = 0;
-            rs += g_uart2_gy33_r;
-            gs += g_uart2_gy33_g;
-            bs += g_uart2_gy33_b;
-            n++;
-        }
-        osDelay(4);
-    }
-    if (n == 0) return COLOR_UNKNOWN;
-
-    Color_DataTypeDef d;
-    d.red   = (uint8_t)(rs / n);
-    d.green = (uint8_t)(gs / n);
-    d.blue  = (uint8_t)(bs / n);
-    d.online = 1U;
-    return Color_Judge(&d);
-}
-
-Color_TypeDef Collect_ReadColor_NB(void)
-{
-
-    if (!g_uart2_gy33_ready) return COLOR_UNKNOWN;
-
-    g_uart2_gy33_ready = 0;
-
-    Color_DataTypeDef d;
-    d.red    = g_uart2_gy33_r;
-    d.green  = g_uart2_gy33_g;
-    d.blue   = g_uart2_gy33_b;
-    d.online = 1U;
-    return Color_Judge(&d);
-}
-
-Color_TypeDef Collect_WaitObject(void)
-{
-    Collect_WaitEnter();
-    return Collect_ReadColor();
-}
+/* V1.20.0 删除: Collect_ReadColor() / Collect_ReadColor_NB() / Collect_WaitObject()。
+ * 三者读的是 GY-33 颜色传感器的 g_uart2_gy33_* 全局量, 而那些变量的定义只存在于
+ * hardware/bus/uart2_tbop10.c 的**注释**里 (整个文件被注释掉了)。它们能过编译
+ * 只是因为当时无人调用、被 --gc-sections 整段丢掉 —— 一旦被引用就链接失败。
+ * 颜色改由 MSP 芯片经 USART2 回传, 见 hardware/sensors/msp_color.c。 */
 

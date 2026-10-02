@@ -52,6 +52,12 @@ typedef struct {
     /* 槽位 → 世界坐标 (标定后填入) */
     TgtPos_t pos[5];          /* pos[A..E] */
 
+    /* ---- V1.20.0 追加（只能往后加，保证前向兼容）----
+     * 物块采集结果。槽位下标与 color[] 同一套 (0 = 物理槽 1)。 */
+    uint8_t  shape[5];        /* 槽位 → BlockShape_t 的取值(见 block_basic.h); 0 = 未采集 */
+    int16_t  raw_angle[5];    /* 夹紧时回读的 SCS0009 原始位置; 有效与否看 collected */
+    uint8_t  collected;       /* bit0..4 = 物理槽 1..5 已完成采集 */
+
 } TT_t;  /* Turntable */
 
 extern TT_t    g_tt;
@@ -65,6 +71,34 @@ void SetQR(uint8_t idx);                         /* 设置 QR 序号, 解析映�
 void TT_SetColor(uint8_t slot, Color_TypeDef c);  /* 存检测到的颜色到槽位 */
 uint8_t SlotByColor(Color_TypeDef c);            /* 颜色 → 槽位 */
 uint8_t ColorAtSlot(uint8_t slot);               /* 槽位 → 颜色 */
+
+/* ---- V1.20.0 追加: 物块采集结果 (形状 / 夹紧回读角度 / 是否已采集) ----
+ * @note 三个 Set 都会拒绝 slot >= 5。raw_angle 是否有效**一律以 collected 为准**,
+ *       不要靠 raw_angle 的初值判断 —— TT_Init() 是 memset(0), 初值是 0 不是 -1。 */
+void    TT_SetShape(uint8_t slot, uint8_t shape);   /* shape 取 BlockShape_t */
+void    TT_SetRawAngle(uint8_t slot, int16_t raw);
+void    TT_SetCollected(uint8_t slot, bool done);
+uint8_t ShapeAtSlot(uint8_t slot);                  /* 未采集返回 SHAPE_UNKNOWN(0) */
+int16_t RawAngleAtSlot(uint8_t slot);               /* 未采集返回 -1 */
+bool    TT_IsCollected(uint8_t slot);
+
+/* ---- 奖杯名次 (V1.21.0) ----
+ * 取值与 Jang_type 同编码: **1=冠军 2=亚军 3=季军** (见 ColorIdentif.h 的 trophy[] 注释)。
+ * @note 槽位下标是 0~2, 对应转盘物理槽 1~3 (只有 3 个奖杯位)。 */
+void    TT_SetTrophy(uint8_t slot, uint8_t rank);
+uint8_t TrophyAtSlot(uint8_t slot);                 /* 未采集返回 0 */
+
+/**
+ * @brief  名次 → 它在哪个槽 (反查)。
+ * @param  rank  1=冠军 2=亚军 3=季军。
+ * @return g_tt 下标 0~2 (对应转盘物理槽 1~3)；没找到返回 SLOT_NONE。
+ *
+ * @note   与 SlotByColor() 同风格 (0 基下标 + SLOT_NONE 表示没找到)。
+ * @note   **摆放阶段必须用这个, 不能用 NF_TROPHY_SLOT[]** —— 那张表是旧 QR 方案
+ *         的固定映射 (冠军→槽3), 而奖杯现在落在哪个槽由**收集顺序**决定,
+ *         名次是收完才填进 g_tt.trophy[] 的, 两者对不上。见 V1.21.1 记录。
+ */
+uint8_t SlotByTrophy(uint8_t rank);
 bool    TT_RotateByQR(void);                     /* 每次转一个槽位, 返回 false=已全部转完 */
 void    TT_RotateReset(void);                    /* 重置旋转进度 */
 bool    TT_IsDone(void);                         /* 检查是否全部转完 */

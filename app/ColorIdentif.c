@@ -128,6 +128,78 @@ uint8_t ColorAtSlot(uint8_t slot)
 }
 
 /* ============================================================
+ * V1.20.0: 物块采集结果 (形状 / 夹紧回读角度 / 是否已采集)
+ * ============================================================ */
+void TT_SetShape(uint8_t slot, uint8_t shape)
+{
+    if (slot >= 5) return;
+    g_tt.shape[slot] = shape;
+}
+
+void TT_SetRawAngle(uint8_t slot, int16_t raw)
+{
+    if (slot >= 5) return;
+    g_tt.raw_angle[slot] = raw;
+}
+
+void TT_SetCollected(uint8_t slot, bool done)
+{
+    if (slot >= 5) return;
+    if (done) {
+        g_tt.collected |=  (uint8_t)(1u << slot);
+    } else {
+        g_tt.collected &= (uint8_t)~(1u << slot);
+    }
+}
+
+uint8_t ShapeAtSlot(uint8_t slot)
+{
+    if (slot >= 5) return SHAPE_UNKNOWN;
+    return g_tt.shape[slot];
+}
+
+int16_t RawAngleAtSlot(uint8_t slot)
+{
+    if (slot >= 5 || !(g_tt.collected & (1u << slot))) return -1;
+    return g_tt.raw_angle[slot];
+}
+
+bool TT_IsCollected(uint8_t slot)
+{
+    if (slot >= 5) return false;
+    return (g_tt.collected & (1u << slot)) != 0u;
+}
+
+/* ============================================================
+ * V1.21.0: 奖杯名次 (转盘槽 1~3 ↔ 下标 0~2)
+ * 取值 1=冠军 2=亚军 3=季军, 与 Jang_type / NX 的 '1'/'2'/'3' 同编码。
+ * ============================================================ */
+void TT_SetTrophy(uint8_t slot, uint8_t rank)
+{
+    if (slot >= 3) return;
+    g_tt.trophy[slot] = rank;
+}
+
+uint8_t TrophyAtSlot(uint8_t slot)
+{
+    if (slot >= 3) return 0u;
+    return g_tt.trophy[slot];
+}
+
+/* 名次 → 槽位 (反查)。没找到返回 SLOT_NONE。 */
+uint8_t SlotByTrophy(uint8_t rank)
+{
+    if (rank == 0u) return SLOT_NONE;      /* 0 = 未采集, 不是合法名次 */
+
+    for (uint8_t s = 0; s < 3u; s++) {
+        if (g_tt.trophy[s] == rank) {
+            return s;
+        }
+    }
+    return SLOT_NONE;
+}
+
+/* ============================================================
  * TT_RotateByQR — 按 QR 颜色顺序, 旋转到每个颜色所在物理槽位
  * ============================================================ */
 bool TT_RotateByQR(void)

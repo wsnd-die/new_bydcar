@@ -39,6 +39,8 @@
 #include "key.h"
 #include "NavigationMecanum.h"
 #include "collect_ir.h"
+#include "block_collect.h"  /* BlockCollect_Task (V1.20.0) */
+#include "msp_color.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -157,6 +159,14 @@ void MX_FREERTOS_Init(void) {
   Key_Init();
   IR_Init();
 
+  /* MSP 颜色芯片: 挂上 USART2 的 DMA-IDLE 接收 (V1.20.6)。
+   * 放在这里是因为 USART2 已在 MX_USART2_UART_Init() 里配好、DMA 句柄也已
+   * 由它的 MspInit 链接好, 而本函数在 osKernelStart() 之前跑。
+   * **全工程只此一处** —— 重复调用会先 memset 再重挂, 而 DMA 已经挂着,
+   * HAL_UARTEx_ReceiveToIdle_DMA 返回 HAL_BUSY 直接退出, 结果是状态被清、
+   * 接收却没重挂。 */
+  MSP_Color_Init();
+
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -266,8 +276,6 @@ void StartDefaultTask(void *argument)
     if (cmd.k) {
 
     }
-
-
     osDelay(20);
   }
   /* USER CODE END StartDefaultTask */
@@ -308,47 +316,27 @@ void ops9imu_fuction(void *argument)
 /* USER CODE END Header_gripper_task */
 void gripper_task(void *argument)
 {
-  /* USER CODE BEGIN gripper_task */
-  /* ── 总线初始化 ────────────────────────────────────────────────────
-   * 串口助手接 huart2 (PA2/PA3, 115200) 看 printf 输出。
-   * 常量见本文件 USER CODE BEGIN PD 区。 */
   HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_4);
   if (!SCS_BusInit()) {
-    /* huart5.Instance == NULL —— MX_UART5_Init() 没跑，见变更记录 V1.10.0 备注 2 */
     printf("[scs] bus init FAIL: huart5 not initialized\r\n");
     for (;;) { osDelay(100); }
   }
   while (!BPlace_SetZero());
   printf("[scs] init SUCSESS: huart5 initialized\r\n");
-  Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
+  BlockBasic_TurntableTo(1);
   Servo_SetAngle(40);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
-    servo_set_pos(id, SCS_CLOSE);
-    osDelay(1000);
-  }
-  for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
-    osDelay(1000);
   }
-  // for (uint8_t i =1;i<=BLOCK_TURNTABLE_POS_COUNT;i++)
-  // {
-  //   BlockBasic_TurntableTo(i);
-  //   osDelay(200);
-  // }
-  int raw[5] ;
-  osDelay(500);
-
-
+  // BlockBasic_LiftTo(UP,60);
+  printf("[scs] gripper init done\r\n");
   for (;;)
   {
-    // uint8_t id =IR_ObjectEntered();
-    for (uint8_t i=SERVO_ID_SCS0009_MIN;i<=SERVO_ID_SCS0009_MAX;i++)
-    {
-      raw[i-SERVO_ID_SCS0009_MIN]=Scs0009_ReadRaw(i);
-      osDelay(100);
-    }
-    // printf("%d,%d,%d,%d,%d\r\n",raw[0],raw[1],raw[2],raw[3],raw[4]);
-    osDelay(200);
+    BlockCollect_Poll();
+
+    // MSP_Color_DebugPoll();
+
+    osDelay(20);
   }
   /* USER CODE END gripper_task */
 }
@@ -364,13 +352,15 @@ void FC_TASK(void *argument)
 {
   /* USER CODE BEGIN FC_TASK */
   NX_Init();
-  char dir;
   /* Infinite loop */
   for(;;)
   {
     FC_Fuction();
-    // NX_GetCircleDir(&dir);
-    // printf("%c\r\n",dir);
+
+    /* @note 这里原来有个 `NX_GetTrophyRank(&rank)` + printf 的调试打印, 已摘掉
+     *       (V1.21.0) —— 那个函数是**消费式**的 (读后清 trophy_fresh), 而采集
+     *       侧的 wait_trophy_rank() 才是真正的消费者。两边同时调会互相抢帧,
+     *       结果是谁都拿不稳。调试时想再开, 请临时把采集那边停掉再开这里。 */
     osDelay(10);
   }
   /* USER CODE END FC_TASK */
@@ -437,8 +427,10 @@ void KEY_TASK(void *argument)
      * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
     if (Key_WasPressed(KEY_START))
     {
-      printf("[KEY] 启动键 -> NLF_Request(Event_Navigation)\r\n");
-      // printf("%.5f,%.5f,%.5f",);
+      /* V1.20.0: 启动键改为先跑物块采集 (槽 2~5 夹取+读形+读色),
+       * 采集完由 NF_Stage_Collect() 自动落回 Event_Navigation,
+       * 后面的顺序表 (NF_STAGES[]) 原样不动。 */
+      printf("[KEY] 启动键 -> NLF_Request(Event_Collect)\r\n");
       NLF_Request(Event_Navigation);
     }
 

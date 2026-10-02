@@ -27,6 +27,7 @@ void NX_SetMode(uint8_t mode);
 
 /* ==================== 数据读取 ==================== */
 // bool NX_GetLineAngle(float *angle);   /* 实现已注释，暂不提供 */
+bool NX_GetTrophyRank(char *rank);
 bool NX_GetCircleDir(char *dir);
 bool NX_GetPosition(float *x, float *y);
 bool NX_GetCirclepos(float *cx,float *cy);

@@ -362,8 +362,21 @@ active_locator->get_pose(&robot_pose);
 
 | 版本 | 日期 | 摘要 | 记录 |
 |---|---|---|---|
+| V1.20.4 | 2026-10-02 | 修复：**MSP 帧解析器与发送端格式对不上**，颜色恒为兜底值 —— 按真实帧 `A3<color><r><g><b>B3` 重写状态机，颜色直接取帧头后的字符；RGB 段因 `%d%d%d` 无分隔符**原理上切不开**故丢弃；取到色打印 `[MSP] color='r' -> RED` | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.20.5 | 2026-10-02 | 修改：`MSP_Color_Init()` 调用点归位到 `main.c` 的 `USER CODE BEGIN 2`；**顺带修掉一处重复调用**（`usart.c` + `app_freertos.c` 各一份，第二次会 memset 后 `HAL_BUSY` 退出） | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.20.6 | 2026-10-02 | 修改：`MSP_Color_Init()` 按用户要求从 `main.c` 移回 `app_freertos.c` 的 `USER CODE BEGIN Init`（**仍只保留一处调用**，V1.20.5 修掉的重复调用未恢复） | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.20.7 | 2026-10-02 | 新增（**临时调试**）：`MSP_Color_DebugPoll()` —— 每收到一整帧就打印 `[MSP-RX] color='r' rgb_raw="2003040"`，挂在 `gripper_task` 循环里与采集流程**解耦**；数字段原样打印不切分（`%d%d%d` 无分隔符无定宽，切不开） | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.21.0 | 2026-10-02 | 新增：**奖杯名次判断** —— `wait_trophy_rank()` 轮询 `NX_GetTrophyRank()`（消费式，全工程仅此一个调用点，`FC_TASK` 里抢帧的调试打印已摘掉），存进 `g_tt.trophy[]`（补 `TT_SetTrophy`/`TrophyAtSlot`）；⚠ 分支开关 `k` 恒 false，**奖杯分支目前是死代码** | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.21.1 | 2026-10-02 | 修改：摆放阶段「名次→槽位」改**反查 `g_tt.trophy[]`**（新增 `SlotByTrophy()`）—— 旧的 `NF_TROPHY_SLOT[]`（冠军→槽3 固定表）与「第 N 个进槽 N」的收集顺序对不上，会拿错奖杯；该表已**删除** | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.21.2 | 2026-10-02 | 修改：奖杯名次改为**等待期间投票** —— `wait_block_entered()` 加 `rank_out` 出参，等物块进来的同时累计 NX 名次的票、进来时取多数（同票取名次靠前，零票写 0），**夹住之前就定好**；删除 `wait_trophy_rank()` | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.21.3 | 2026-10-02 | 修复：NX 奖杯名次**实际回的是字母 `'a'/'b'/'c'` 不是 `'1'/'2'/'3'`**（按数字判断导致每帧都被丢弃、票恒为 0）；新增 `trophy_char_to_rank()` 映射 a=冠军 b=亚军 c=季军 | [2026-10-02](clauderecord/2026-10-02.md) |
+| V1.21.4 | 2026-10-02 | 修改：采集分支开关由静态 `k` 改为**调用方传参** —— 新增 `BlockCollectStage_t` + `BlockCollect_SetStage()`，`NF_Stage_Collect(stage)` 由 `Event_Collect_L`/`_R` 分别传 `COLLECT_MATERIAL`/`COLLECT_TROPHY`；分支**不再自动翻转** | [2026-10-02](clauderecord/2026-10-02.md) | 修复：**MSP 帧解析器与发送端格式对不上**，颜色恒为兜底值 —— 按真实帧 `A3<color><r><g><b>B3` 重写状态机，颜色直接取帧头后的字符；RGB 段因 `%d%d%d` 无分隔符**原理上切不开**故丢弃；取到色打印 `[MSP] color='r' -> RED` | [2026-10-02](clauderecord/2026-10-02.md) |
 | V1.19.7 | 2026-10-01 | 优化：精简 `arc_path.c/h` 注释（代码逻辑一行未改）；保留两条 `@warning` | [2026-10-01](clauderecord/2026-10-01.md) |
 | V1.19.8 | 2026-10-01 | 修改：圆弧改为**自持指令源 + 纯几何开环** —— `Arc_Run()` 自己 `Mecanum_Calc(v, v/R)` + `Send_commandmotor`，不再走 `g_angle_ctrl_*`（worker_task.c 已删其定义，原先**链接失败**）；⚠ 航向无反馈，轨迹会偏 | [2026-10-01](clauderecord/2026-10-01.md) |
+| V1.20.0 | 2026-10-01 | 新增：**物块收集** —— 新建 `hardware/sensors/msp_color.*`（USART2 DMA-IDLE 收 `'r'`/`'b'`）+ `app/block_collect.*`（收集状态机，见 V1.20.1）；`block_basic` 加夹爪动作与形状判定；`TT_t` 末尾追加 `shape/raw_angle/collected`；启动键 PA0 改发 `Event_Collect`。⚠ 阈值/时延全为占位值，**实机未验证** | [2026-10-01](clauderecord/2026-10-01.md) |
+| V1.20.1 | 2026-10-01 | 修改：**V1.20.0 的设计修正** —— 采集不另起任务，改为 `gripper_task` 循环里轮询 `BlockCollect_Poll()`；删掉 `blockcol` 任务与那 2KB 栈 | [2026-10-01](clauderecord/2026-10-01.md) |
+| V1.20.2 | 2026-10-01 | 修复：`Slot_Shape[]` 定义在头文件里导致 **multiple definition 链接失败** —— 移入 `block_basic.c` 并 `static const`；`ShapeFromRaw()` 补槽号越界保护（改为逐槽阈值） | [2026-10-01](clauderecord/2026-10-01.md) |
+| V1.20.3 | 2026-10-01 | 修改：**采集时序重排** —— 夹和识别错开一拍（夹紧→转一步→才读形状/颜色，因传感器在转过一步的位置）；圆锥单走一段不夹不识别；第 5 个转 `BLOCK_TURNTABLE_DOOR_DEG`(340°) 关门 | [2026-10-01](clauderecord/2026-10-01.md) |
 | V1.19.6 | 2026-09-30 | 修改：`g_waypoints[]` 9~16 点按现场重新示教值更新（11 号点补真实值，摘除旧占位警告） | [2026-09-30](clauderecord/2026-09-30.md) |
 | V1.19.4 | 2026-09-29 | 新增：`Scs0009_ReadRaw()` —— 读 SCS0009 位置（走 `SCS_FeedBack` 缓冲区路径以**绕开字节序竞态**）；**零调用者，待接线** | [2026-09-29](clauderecord/2026-09-29.md) |
 | V1.19.5 | 2026-09-29 | 修复：**回读跑一会儿就恒为 -1** —— 根因是厂商 `rFlushSCS()` 是假刷新（只延时不清 RX）导致残留错位级联；`ftBus_Delay()` 补 RX 排空 + 清 ORE/FE/NE，`Scs0009_ReadRaw()` 改直读 2 字节（回帧 21→8 字节） | [2026-09-29](clauderecord/2026-09-29.md) |

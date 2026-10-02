@@ -16,11 +16,9 @@
 
 #include "../uart/NX_uart.h"
 
-/* ---- 比赛流程用到的执行体 (见 4.3 各阶段执行体) ----
- * @note 这些是驱动层/业务层的头, 应用层直接 include 是**分层债** ——
- *       规范 (CLAUDE.md §1) 目标是应用层只经业务层接口。当前工程尚未落地
- *       那层封装, 旧版 NLF_TASK 也是这么直调的, 故沿用并在变更记录里记一笔。 */
+
 #include "ColorIdentif.h"        /* TT_Init / TT_SetColor / SetQR / TT_RotateByQR ... */
+#include "block_collect.h"       /* BlockCollect_Start / IsDone (V1.20.0) */
 #include "QRcode.h"              /* Jang_type: champion / second_place / third_place */
 #include "block_basic.h"         /* Place / BlockBasic_TurntableTo / BlockBasic_LiftTo */
 #include "drv_wheel_odom.h"      /* Wheel_Odom_Reset (旧代码的 World_Reset) */
@@ -47,7 +45,7 @@ static void AG_Stop(void)
 }
 void Angle_Fuction(void)
 {
-    uint8_t  was_on    = 0;      /* 上一拍的 g_angle_ctrl_enable, 用于取边沿 */
+    uint8_t  was_on    = 0;
 
     imu_hwt906.init();
     Angle_Init(&s_fc);
@@ -109,13 +107,7 @@ void NLF_Fuction(void)
 {
     static bool s_kicked = false;
 
-    /* ---- 起跑 ----------------------------------------------------
-     * 旧 NLF_TASK 起来就先 task_send(Event_Navigation) 自动开流程。这里保留
-     * 同样的行为, 但走 NLF_Request (线程标志) 而不是事件队列 —— 因为队列的
-     * 生产者至今为零, 且队列那条路仍留给将来的上位机/调试指令。
-     *
-     * 由 NF_AUTOSTART 控制 (见 4.2): 置 0 则必须由外部 task_send() 或其他任务
-     * 调 NLF_Request() 才会起步。 */
+
     if (!s_kicked) {
         s_kicked = true;
 #if NF_AUTOSTART
@@ -130,21 +122,7 @@ void NLF_Fuction(void)
     }
 }
 
-/* ==================================================================
- * 4.1  比赛流程的硬编码默认值   ★★★ 临时, 等 NX 报文接入后删除 ★★★
- *
- * 背景 (2026-09-28): 旧版流程里这两组数据来自 K230 扫二维码 ——
- * Task1 左码 (0~15) 定五个物块槽位, Task2 右码 (1~6) 定三个奖杯槽位。
- * 现在决定**不再扫二维码**, 改由上位机 NX (UART4) 回传:
- *     · 收集奖杯的 1/2/3 顺序
- *     · 收集到的颜色物块
- *
- * NX 侧本次**一行未动** (uart/NX_uart.c 协议未扩展), 所以先在这里写死一组
- * 默认值把流程串通。等 NX 协议定下来, 只需改 4.2 的 NF_FlowSeed() ——
- * 下面每个表上都标了 ★ NX 接入点, 流程主体一行都不用改。
- *
- * @warning 改这里等于改比赛策略, 上机前务必确认。
- * ================================================================== */
+
 
 #define NF_RANK_COUNT        3u    /* 奖杯个数 */
 #define NF_TASK1_SLOT_COUNT  5u    /* 物块槽位数 */
@@ -159,18 +137,12 @@ static const Jang_type NF_RANK[NF_RANK_COUNT] = {
     second_place, champion, third_place,
 };
 
-/** 每个奖杯对应的转盘工位 (1~5)。
- *  原由 Slop_dirjang() 从 QR 右码 T2[Jang_Num-1][...] 解出; QR 移除后直接写死。
- *  取值 = T2 第 1 行 {金, 银, 铜} 的倒序映射, 与 Jang_Num=1 时 Slop_dirjang()
- *  的输出逐项一致 (冠军→3, 亚军→2, 季军→1)。
- *  ★ NX 接入点: NX 若直接回传工位号就换本表; 若回传 QR 图案号, 换回
- *    Slop_dirjang() (那需要把 Jang_Num 也一并喂进去)。 */
-static const uint8_t NF_TROPHY_SLOT[4] = {
-    0u,   /* [0] 占位 —— Jang_type 从 1 (champion) 开始, 下标 0 不使用 */
-    3u,   /* champion      → 转盘工位 3 */
-    2u,   /* second_place  → 转盘工位 2 */
-    1u,   /* third_place   → 转盘工位 1 */
-};
+/* V1.21.1 **删除** `NF_TROPHY_SLOT[]` (名次 → 固定转盘工位: 冠军→3/亚军→2/季军→1)。
+ *
+ * 它是旧 QR 方案的产物 —— 那时 QR 码直接告诉你"冠军在哪个工位", 所以可以做一张
+ * 名次→工位的固定表。现在奖杯落在哪个槽由**收集顺序**决定 (第 N 个进槽 N),
+ * 名次是收完才填进 g_tt.trophy[] 的, 固定表与实际情况对不上, 照它转盘会拿错奖杯。
+ * 摆放阶段已改成反查 g_tt.trophy[] (见 ColorIdentif.c 的 SlotByTrophy)。 */
 
 /** 各奖杯放置时的丝杆高度 (mm)。。 */
 static const uint16_t NF_PLACE_HEIGHT[4] = { 0u, 37u, 28u, 17u };
@@ -331,6 +303,37 @@ static void NF_Stage_LinFolR(void)
     NLF_Request(Event_Navigation);
 }
 
+/** 采集阶段的等待上限。4 个槽 × (IR 超时 10s + 转盘 + 夹取 + 读色), 留一倍余量。 */
+#define NF_COLLECT_TIMEOUT_MS   120000u
+
+/**
+ * @brief 物块采集 —— 交给独立的 blockcol 任务跑, 本阶段只等它出结果。
+ * @note  采集序列本身阻塞得很重 (等 IR、等总线往返), 直接写在 NLF_TASK 里会一直
+ *        占着这个高优先级任务 (osPriorityHigh)。丢给 blockcol (Normal) 之后本阶段
+ *        只需要轮询完成标志, 中途照样让得出去。
+ */
+static void NF_Stage_Collect(BlockCollectStage_t stage)
+{
+    printf("[FLOW] Collect: 请求采集 (%s)\r\n",
+           (stage == COLLECT_TROPHY) ? "奖杯" : "物料");
+
+    BlockCollect_SetStage(stage);
+    BlockCollect_Reset();
+    BlockCollect_Start();
+
+    uint32_t t0 = HAL_GetTick();
+    while (!BlockCollect_IsDone()) {
+        if ((HAL_GetTick() - t0) > NF_COLLECT_TIMEOUT_MS) {
+            printf("[FLOW] Collect 超时, 强行推进\r\n");
+            break;
+        }
+        osDelay(20);
+    }
+
+    printf("[FLOW] Collect: 完成\r\n");
+    NLF_Request(Event_Collect_R);
+}
+
 /**
  * @brief 找圆 → 对准 → 放一个物块。
  * @note  与旧代码的两处关键差异, 都是必须的:
@@ -345,7 +348,6 @@ static void NF_Stage_FindCircle(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-
 
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
@@ -379,8 +381,15 @@ static void NF_Stage_FindCircle(void)
 static void NF_Stage_PlaceDown(void)
 {
     Jang_type rank = NF_RANK[s_place_idx % NF_RANK_COUNT];
-    uint8_t   slot = NF_TROPHY_SLOT[(uint8_t)rank];
     uint32_t  t0;
+
+    /* 名次 → 槽位要**反查** g_tt.trophy[], 不能用那张旧的 NF_TROPHY_SLOT[]。
+     * 后者是旧 QR 方案的固定映射 (冠军→槽3), 而奖杯现在落在哪个槽由
+     * **收集顺序**决定 (第 N 个进槽 N), 名次是收完才填进 g_tt.trophy[] 的 ——
+     * 两者对不上, 照抄那张表会拿错奖杯。详见 V1.21.1 记录。 */
+    const uint8_t slot_idx = SlotByTrophy((uint8_t)rank);   /* g_tt 下标 0~2 / SLOT_NONE */
+    const uint8_t tslot    = (slot_idx == SLOT_NONE) ? 0u
+                                                     : (uint8_t)(slot_idx + 1u);  /* 转盘槽 1~3 */
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
@@ -389,10 +398,21 @@ static void NF_Stage_PlaceDown(void)
     /* 1) 转盘转到该奖杯所在工位 —— 每个奖杯只在第一次进入本阶段时转一次。
      *    季军分支在旧代码里还附带一个先下降的预动作。 */
     if (!s_place_latch) {
+        if (slot_idx == SLOT_NONE) {
+            /* 采集阶段没把名次填进来 (或填了别的值)。不猜, 记一条日志跳过本拍,
+             * 否则会转到某个不相干的槽去放。 */
+            printf("[FLOW] PlaceDown rank=%d 在 g_tt.trophy[] 里找不到, 跳过\r\n",
+                   (int)rank);
+            s_place_idx++;
+            s_place_latch = false;
+            NLF_Request(Event_Navigation);
+            return;
+        }
+
         if (rank == third_place) {
             BlockBasic_LiftTo(DOWN, 14u);
         }
-        BlockBasic_TurntableTo(slot);
+        BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
     }
 
@@ -411,7 +431,7 @@ static void NF_Stage_PlaceDown(void)
 
     /* 3) 放置 + 收尾 */
     Place('O', g_circle_avg_x, g_circle_avg_y, NF_PLACE_HEIGHT[(uint8_t)rank]);
-    printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)slot);
+    printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
         BlockBasic_LiftTo(UP, 48u);   /* 亚军: 放完先把丝杆升起 */
@@ -445,12 +465,14 @@ void NLF_RunFlow(SystemMode_t mode)
             NF_Stage_Navigation();
             break;
 
-        case Event_LinFolL:
-            NF_Stage_LinFolL();
+        case Event_Collect_L:
+            /* 物块采集: 圆锥 + 槽 2~5 夹取 + 读形状/颜色, 结果写进 g_tt */
+            NF_Stage_Collect(COLLECT_MATERIAL);
             break;
 
-        case Event_LinFolR:
-            NF_Stage_LinFolR();
+        case Event_Collect_R:
+            /* 奖杯采集: 槽 1~3 等进来 + 投票定名次 + 夹紧, 结果写进 g_tt.trophy[] */
+            NF_Stage_Collect(COLLECT_TROPHY);
             break;
 
         case Event_FindCircle:
@@ -469,6 +491,8 @@ void NLF_RunFlow(SystemMode_t mode)
             /* 跑一段定半径圆弧  */
             Arc_Run();
             break;
+
+
 
         case Event_STOP:
             /* 急停 */

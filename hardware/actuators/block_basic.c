@@ -103,6 +103,79 @@ static void turntable_write_angle(float angle_deg)
                          BLOCK_TURNTABLE_SERVO_ACC);
 }
 
+/* ================================================================
+ * 夹爪 (SCS0009, ID 2~6) —— 槽位 1~5 与 ID 2~6 一一对应
+ *
+ * 用 SCS_WritePos() 而不是 SCS_WritePosEx(): 前者是 SCSCL 系列(SCS0009)
+ * 的写位置接口, 会在锁内把总线字节序切成大端; 后者是 SMS_STS 系列(转盘
+ * ID 1)用的。两个系列的 API 不能互换 —— 见 servo_scs.h 的说明。
+ * ================================================================ */
+
+/* 槽位 ↔ 舵机 ID 的映射是假设, 与 servo_scs.h 的 ID 范围对不上就编译不过 */
+_Static_assert(BLOCK_GRIPPER_SERVO_ID(BLOCK_TURNTABLE_FIRST_POS) == SERVO_ID_SCS0009_MIN,
+               "夹爪 ID 起点与 SERVO_ID_SCS0009_MIN 不符");
+_Static_assert(BLOCK_GRIPPER_SERVO_ID(BLOCK_TURNTABLE_POS_COUNT) == SERVO_ID_SCS0009_MAX,
+               "夹爪 ID 终点与 SERVO_ID_SCS0009_MAX 不符");
+
+static bool gripper_slot_bad(uint8_t slot)
+{
+    return (slot < BLOCK_TURNTABLE_FIRST_POS) || (slot > BLOCK_TURNTABLE_POS_COUNT);
+}
+
+BlockStatus BlockBasic_GripperClamp(uint8_t slot)
+{
+    if (gripper_slot_bad(slot)) {
+        return BLOCK_ERR_PARAM;
+    }
+    (void)SCS_WritePos(BLOCK_GRIPPER_SERVO_ID(slot), SCS_CLOSE, SCS_TIME, SCS_SPEED);
+    return BLOCK_OK;
+}
+
+BlockStatus BlockBasic_GripperRelease(uint8_t slot)
+{
+    if (gripper_slot_bad(slot)) {
+        return BLOCK_ERR_PARAM;
+    }
+    (void)SCS_WritePos(BLOCK_GRIPPER_SERVO_ID(slot), SCS_OPEN, SCS_TIME, SCS_SPEED);
+    return BLOCK_OK;
+}
+
+int BlockBasic_GripperRaw(uint8_t slot)
+{
+    if (gripper_slot_bad(slot)) {
+        return -1;
+    }
+    return Scs0009_ReadRaw(BLOCK_GRIPPER_SERVO_ID(slot));
+}
+
+/* 逐槽的形状判定阈值 —— 夹紧后回读的 SCS0009 原始位置 (量程 0~1024)。
+ * 下标 = 物理槽号 - SLOT_SHAPE_FIRST, 即 [0]=槽2 [1]=槽3 [2]=槽4 [3]=槽5。
+ *
+ * ★ 必须是**夹紧状态下**实测的两簇分布中点: 舵机顶着物块停住, raw 是「夹到该
+ *   物块的位置」, 不是自由行程位置。标定就靠 app/block_collect.c 每槽打印的
+ *   那行 `raw=` 日志 —— 两种物块各夹 20 次, 取两类不重叠区间的中点。
+ * ★ 待迁: config/param_config.h 落地后搬过去 (CLAUDE.md §7.3)。
+ *
+ * @note 定义放 .c 不放 .h —— 带初始化器的文件作用域数组是**定义**,
+ *       写在头文件里会被每个包含它的 .c 各生成一份, 链接期 multiple definition。 */
+#define SLOT_SHAPE_FIRST   2u          /* 表覆盖的物理槽起点 (>0 是因为槽 1 是黄锥, 判它没意义) */
+#define SLOT_SHAPE_COUNT   4u
+static const int Slot_Shape[SLOT_SHAPE_COUNT] = { 460, 462, 472, 468 };
+
+_Static_assert(SLOT_SHAPE_FIRST + SLOT_SHAPE_COUNT - 1u <= BLOCK_TURNTABLE_POS_COUNT,
+               "形状阈值表越过了转盘槽位上限");
+
+BlockShape_t BlockBasic_ShapeFromRaw(int raw_angle, uint8_t slot)
+{
+    if (raw_angle < 0 ||
+        slot < SLOT_SHAPE_FIRST ||
+        slot >= SLOT_SHAPE_FIRST + SLOT_SHAPE_COUNT) {
+        return SHAPE_UNKNOWN;   /* 读失败 / 槽号不在表内, 都不能猜 */
+    }
+    return (raw_angle >= Slot_Shape[slot - SLOT_SHAPE_FIRST])
+           ? SHAPE_RECT : SHAPE_CYLINDER;
+}
+
 /**
  * @brief   根据编译期选定的车型执行对应升降机构，并统一返回转盘后退距离。
  * @param   dir         升降方向，0=下降，1=上升。
@@ -123,7 +196,6 @@ float BlockBasic_LiftTo(uint8_t dir, float pos)
     BlockBasic_DualArmSetPos(arm_pos);
     return 0.0f;
 #else
-    /* 丝杆型：位置模式, 每次走 pos 距离。lift_current 记账防超限 */
     {
         static float lift_current = 0.0f;  /* 已累计的绝对位置 (mm) */
         float next;

@@ -59,6 +59,13 @@ extern "C" {
 #define BLOCK_TURNTABLE_POS_COUNT        5u
 #define BLOCK_TURNTABLE_HOME_DEG         14.0f
 #define BLOCK_TURNTABLE_STEP_DEG         (BLOCK_SERVO_DEG / BLOCK_TURNTABLE_POS_COUNT)
+/**
+ * 关门角度, 单位 deg。第 5 槽之后再往前多转一点把门带上, 用 Servo_Angle() 下发。
+ * 340 = HOME(14) + 4 × STEP(72) [= 槽5] + 38。★ 那 38° 是实测值, 原样来自
+ * Core/Src/app_freertos.c 里注释掉的 `// Servo_Angle(340);`。
+ */
+#define BLOCK_CLOSE_DOOR         340.0f
+#define TROPHY_CLOSE_DOOR        82.0f
 /* 单次最大角度步长。分段移动用于降低 360 度位置舵机自动走最短路径的风险。 */
 #define BLOCK_TURNTABLE_STEP_LIMIT_DEG   72.0f
 #define BLOCK_TURNTABLE_STEP_DELAY_MS    10u
@@ -76,6 +83,34 @@ typedef enum {
     BLOCK_OK = 0,
     BLOCK_ERR_PARAM = 1
 } BlockStatus;
+
+/* ================================================================
+ * 夹爪 (SCS0009, ID 2~6) —— 与转盘槽位一一对应
+ * ================================================================ */
+
+/** 槽位 → 夹爪舵机 ID。槽 1→ID2 … 槽 5→ID6。
+ *  @note 这是**约定**, 仓库里没有别处写明, 首次上机需逐个确认。 */
+#define BLOCK_GRIPPER_SERVO_ID(slot)   ((uint8_t)((slot) + 1u))
+
+/** 物块形状。0 留给「未知/未采集」, 与 g_tt.shape[] 的初值一致。 */
+typedef enum {
+    SHAPE_UNKNOWN  = 0,
+    SHAPE_RECT     = 1,   /* 长方体 */
+    SHAPE_CYLINDER = 2    /* 圆柱 */
+} BlockShape_t;
+
+/** @brief 夹紧槽位 slot 的夹爪 (写 SCS_CLOSE)。 */
+BlockStatus BlockBasic_GripperClamp(uint8_t slot);
+/** @brief 松开槽位 slot 的夹爪 (写 SCS_OPEN)。 */
+BlockStatus BlockBasic_GripperRelease(uint8_t slot);
+/** @brief 回读槽位 slot 夹爪的当前位置。@retval 原始位置 0~1024; -1 = 总线失败。 */
+int BlockBasic_GripperRaw(uint8_t slot);
+/**
+ * @brief  原始位置 → 形状。
+ * @param  slot  物理槽号。判定阈值是**逐槽**的, 见 block_basic.c 的 Slot_Shape[]。
+ * @retval raw < 0(总线失败) 或 slot 不在 2~5 时返回 SHAPE_UNKNOWN —— 不猜。
+ */
+BlockShape_t BlockBasic_ShapeFromRaw(int raw_angle, uint8_t slot);
 
 #if BLOCK_USE_DUAL_ARM
 /* 双机械臂高度换算结果。 */

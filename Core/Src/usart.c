@@ -22,6 +22,7 @@
 
 /* USER CODE BEGIN 0 */
 #include "uart2_tbop10.h"   /* UART2_RxEventCallback + LEGACY_USART2_ODOM_ENABLE */
+#include "msp_color.h"      /* msp_color_RxEventCallback + MSP_Color_Init */
 #include "NX_uart.h"        /* NX_RxEventCallback / NX_RxRestart (UART4) */
 /* USER CODE END 0 */
 
@@ -205,6 +206,9 @@ void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
+
+  /* MSP 颜色芯片的接收在 app_freertos.c 的 MX_FREERTOS_Init() 里挂 (V1.20.6) ——
+   * 全工程只此一处。本文件只保留上面的 RxEvent 分发。 */
 
   /* USER CODE END USART2_Init 2 */
 
@@ -680,6 +684,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 #if LEGACY_USART2_ODOM_ENABLE
     UART2_RxEventCallback(huart, Size);
 #endif
+    msp_color_RxEventCallback(huart, Size);   /* MSP 颜色芯片: 'r' / 'b' */
   }
   else if (huart->Instance == USART3) {
     OPS9_G491_UART3_RxEventCallback(huart, Size);

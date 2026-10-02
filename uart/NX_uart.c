@@ -43,7 +43,9 @@ static struct {
     char     dir;              /* 找圆方向 */
     float    pos_x, pos_y;     /* 位置偏移 (像素) */
     float    circle_x, circle_y;
+    char     trophy;
 
+    uint8_t  trophy_fresh;
     uint8_t  dir_fresh;
     uint8_t  pos_fresh;
     uint8_t circle_flesh;
@@ -70,9 +72,6 @@ static void NX_StartRx(void)
         return;
     }
 
-    /* ReceiveToIdle_DMA 内部走 HAL_DMA_Start_IT，会把半传输(HT)中断一并打开；
-     * 缓冲收到一半（32 字节）时 UART_DMARxHalfCplt 同样触发 RxEvent，会把一次
-     * 接收切成两截。本驱动按「总线 IDLE + 收满」两种事件处理，不需要 HT。 */
     __HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
 }
 
@@ -135,17 +134,16 @@ void NX_RxProcessByte(uint8_t b)
 
         if (b == 0xFF) {
             /* 包结束 */
-            if (NX_ctx.rx_pkt_type == 0xB3 && NX_ctx.rx_idx >= 5) {
-                /* [A3,B3,aH,aL,(xH,xL,)FF] — 5B=仅角度, 7B=角度+横轴位置 */
-                int16_t raw = (int16_t)((NX_ctx.rx_buf[2] << 8) | NX_ctx.rx_buf[3]);
-                // NX_ctx.angle = raw / 100.0f;
-                // NX_ctx.angle_fresh = 1;
+            if (NX_ctx.rx_pkt_type == 0xB3 && NX_ctx.rx_idx >= 4) {
+                /* [A3,B3,rank,FF] — 5B=仅角度, 7B=角度+横轴位置 */
+                NX_ctx.trophy =NX_ctx.rx_buf[2];
+                NX_ctx.trophy_fresh = 1;
 
-                if (NX_ctx.rx_idx >= 7) {
-                    int16_t rx = (int16_t)((NX_ctx.rx_buf[4] << 8) | NX_ctx.rx_buf[5]);
-                    NX_ctx.pos_x = rx / 100.0f;
-                    NX_ctx.pos_fresh = 1;
-                }
+                // if (NX_ctx.rx_idx >= 7) {
+                //     int16_t rx = (int16_t)((NX_ctx.rx_buf[4] << 8) | NX_ctx.rx_buf[5]);
+                //     NX_ctx.pos_x = rx / 100.0f;
+                //     NX_ctx.pos_fresh = 1;
+                // }
                 NX_ctx.rx_ok++;
             } else if (NX_ctx.rx_pkt_type == 0xB4 && NX_ctx.rx_idx >= 4) {
                 /* 方向: [A3, B4, dir, FF] */
@@ -226,6 +224,13 @@ void NX_SetMode(uint8_t mode)
 //     NX_ctx.angle_fresh = 0;
 //     return true;
 // }
+bool NX_GetTrophyRank(char *rank)
+{
+    if (!NX_ctx.trophy_fresh) return false;
+    if (rank) *rank = NX_ctx.trophy;
+    NX_ctx.trophy_fresh = 0;
+    return true;
+}
 
 bool NX_GetCircleDir(char *dir)
 {

@@ -16,9 +16,10 @@
 void          IR_Init(void);
 bool          IR_ObjectPresent(void);   /* 当前是否有物体遮光 */
 bool          IR_ObjectEntered(void);   /* 物体完全进入: 电平先变0(遮挡)再变1(恢复)才返回 true */
-bool          Collect_WaitEnter(void);  /* 只等一个物体进入, 不读色 */
-Color_TypeDef Collect_ReadColor(void);    /* 只读颜色(多帧平均), 不等待进入 */
-Color_TypeDef Collect_ReadColor_NB(void); /* 非阻塞取一帧: 有帧立即判色, 无帧立即返回 UNKNOWN */
-Color_TypeDef Collect_WaitObject(void);   /* 等一个物体进入并读色, 返回颜色 */
+bool          Collect_WaitEnter(void);  /* 只等一个物体进入 */
+
+/* V1.20.0 删除: Collect_ReadColor() / Collect_ReadColor_NB() / Collect_WaitObject()。
+ * 它们依赖 GY-33 的 g_uart2_gy33_* 全局量, 而后者只在注释里定义 —— 一旦被调用
+ * 就链接失败。颜色现在由 MSP 芯片经 USART2 回传, 见 hardware/sensors/msp_color.h。 */
 
 #endif
