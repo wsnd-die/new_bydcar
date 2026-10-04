@@ -52,7 +52,7 @@ extern World_Dir_t Self_Dir;
 #define NAV_VMAX_X            2.0f    /* x平移速度限幅 m/s */
 #define NAV_VMAX_Y            2.0f    /* y平移速度限幅 m/s */
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
-#define NAV_ACC_XY             2.5f    /* 平移加速度 m/s² (软启动) */
+#define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
 #define NAV_TOL_XY             0.02f   /* 到达容差 3cm */
 #define NAV_TOL_YAW            0.05f   /* 到达容差 ~2.9° */
@@ -78,10 +78,10 @@ extern World_Dir_t Self_Dir;
 #ifndef NAV_XY_PROFILE
 #define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
 #endif
-#define NAV_KP_X_LIN    3.3f
-#define NAV_KP_Y_LIN    0.0f
-#define NAV_BRK_X       0.75f
-#define NAV_BRK_Y       0.0f
+#define NAV_KP_X_LIN    5.3f
+#define NAV_KP_Y_LIN    5.3f
+#define NAV_BRK_X       0.9f
+#define NAV_BRK_Y       0.9f
 #define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 
@@ -138,6 +138,13 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
  * @return false  本点超时未到达（游标不推进，下次重试）
  */
 bool Nav_FeDuanPoint(void);
+
+/**
+ * @brief 上一次 Nav_FeDuanPoint() **走完**的点号（1 基, 与 g_waypoints[] 的注释编号一致）。
+ * @return 0    还没走过点 / 该点超时没走到 / 路线已走完
+ * @note   给 worker_task.c 的"到位后向前蹭料"挑点位用的（见 NF_CREEP_WP[]）。
+ */
+uint8_t Nav_LastWaypointNo(void);
 
 /**
  * @brief 世界系相对移动 —— 以当前 Self_Dir 为基准走一个相对位移

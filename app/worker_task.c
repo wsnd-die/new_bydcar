@@ -21,6 +21,7 @@
 #include "block_collect.h"       /* BlockCollect_Start / IsDone (V1.20.0) */
 #include "QRcode.h"              /* Jang_type: champion / second_place / third_place */
 #include "block_basic.h"         /* Place / BlockBasic_TurntableTo / BlockBasic_LiftTo */
+#include "collect_ir.h"          /* IR_ObjectPresent —— 蹭料用 (不能用 IR_ObjectEntered, 见 NF_CreepForward) */
 #include "drv_wheel_odom.h"      /* Wheel_Odom_Reset (旧代码的 World_Reset) */
 
 volatile uint8_t g_angle_ctrl_enable = 0;    /* 1 = 打开角度环 */
@@ -263,25 +264,7 @@ static bool NF_DispatchNext(SystemMode_t *out)
     return true;
 }
 
-/* ==================================================================
- * 4.3  各阶段执行体
- *
- * @note  与旧 NLF_TASK 一致: 每个阶段**跑完自己那一段**才返回, 返回前用
- *        NLF_Request() 把下一个阶段挂上 (旧代码用的是 task_send() 走事件队列,
- *        这里走线程标志, 少一趟调度器往返 —— 见 worker_task.h 的契约)。
- *        所有阶段最终都回到 Event_Navigation 这个"中继站", 由它去查顺序表。
- * ================================================================== */
 
-/* ==================================================================
- * 路线源 —— 编译期二选一 (V1.23.0)
- *
- *   0 (默认) = 分点导航: 每次走 g_waypoints[] 的一个点 (Nav_FeDuanPoint)
- *   1        = 圆弧模式: 那 8 个点位**整个不导航**, 改成下面这张 4 段表
- *
- * 用户要求(2026-10-02): 以后收集物块/奖杯不一定走定点, 可能改跑圆弧,
- * 所以要能一处切换。宏带 #ifndef 守卫, 也可以从构建系统传
- * `-DNF_ROUTE_ARC=1` 覆盖。
- * ================================================================== */
 #ifndef NF_ROUTE_ARC
 #define NF_ROUTE_ARC  0
 #endif
@@ -361,9 +344,95 @@ static bool NF_RouteStep(void)
  * 条路径上, 而在 `NF_Stage_Collect()` 不再阻塞 (见该函数)。
  */
 static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
+/* ==================================================================
+ * 到位后"向前蹭料" (V1.24.3)
+ *
+ * 采集点位上, 位置环判"到位"时车头离物块还差一点点, 进料口 IR 不触发 →
+ * 采集侧 wait_block_entered() 干等 5s 超时, 物块收不到。
+ *
+ * 所以在流程派发下一个阶段**之前**, 原地向前低速蹭一小段, 一直蹭到物块
+ * "完全进入"进料口为止。距离和时长两道限幅, 蹭不进去也不会一直顶着。
+ * ================================================================== */
+#define NF_CREEP_FWD_M       0.06f    /* 前进距离上限 (m) —— 第一道限幅 */
+#define NF_CREEP_VMPS        0.06f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
+#define NF_CREEP_TIMEOUT_MS  1200u    /* 总时长上限 (ms) —— 第二道限幅 */
+#define NF_CREEP_TICK_MS     10u      /* 蹭的控制周期 (ms) */
+
+/** 需要"到位后向前蹭"的点位 (1 基点号, 与 NavigationMecanum.c 的
+ *  g_waypoints[] 注释编号一致): 1~3 奖杯点 + 7~11 物料点 e/c/d/a/b, 共 8 个。
+ *  ★ 只改这张表就换点位。 */
+static const uint8_t NF_CREEP_WP[] = {
+    1u, 2u, 3u, 7u, 8u, 9u, 10u, 11u,
+};
+
+/** @brief 点号是否在"要蹭"的表里。 */
+static bool NF_NeedCreep(uint8_t wp)
+{
+    for (uint8_t i = 0u; i < (uint8_t)(sizeof(NF_CREEP_WP) / sizeof(NF_CREEP_WP[0])); i++) {
+        if (NF_CREEP_WP[i] == wp) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief 向前低速蹭, 直到物块**完全进入**进料口 / 到达距离上限 / 超时。
+ *
+ * @note "完全进入"的判据与 collect_ir.c 的 `IR_ObjectEntered()` **一致**
+ *       (上一拍遮光 → 这一拍恢复), 但**必须用本函数自己的边沿状态**:
+ *       collect_ir 里那个 static 归 gripper_task 的 wait_block_entered() 专用,
+ *       两边共用一个状态会让彼此的判据都错乱 —— 所以这里只读纯电平的
+ *       `IR_ObjectPresent()`, 自己判边沿。
+ * @note 结束时**消费掉 `g_route_abort`** —— 蹭的过程中物块进来, 采集侧会
+ *       `Route_AbortRequest()`; 而这一段导航早就结束了, 不消化掉的话
+ *       **下一段导航刚进去就被"打断", 直接跳过下一个点位**。
+ * @note 车体系前行(`Mecanum_Calc_Full_V(v,0,0)`), 不依赖 OPS9 —— 就是它把车
+ *       停在了物块前面, 不能再靠它。
+ */
+static void NF_CreepForward(void)
+{
+    uint32_t t0      = osKernelGetTickCount();
+    float    travel  = 0.0f;
+    bool     ir_last = IR_ObjectPresent();   /* 起点先采一拍当作"上一拍" */
+
+    while ((travel < NF_CREEP_FWD_M) &&
+           ((osKernelGetTickCount() - t0) < NF_CREEP_TIMEOUT_MS))
+    {
+        MecanumResult cmd = Mecanum_Calc_Full_V(NF_CREEP_VMPS, 0.0f, 0.0f);
+        Send_commandmotor(&cmd);             /* 车体系: 车头朝哪就往前哪 */
+        osDelay(NF_CREEP_TICK_MS);
+        travel += NF_CREEP_VMPS * ((float)NF_CREEP_TICK_MS / 1000.0f);
+
+        bool now  = IR_ObjectPresent();
+        bool fell = (ir_last && !now);       /* 遮光 → 恢复 = 疑似"完全进入" */
+        ir_last   = now;
+
+        if (fell) {
+            osDelay(20);                     /* 复确认一拍, 防毛刺 */
+            if (!IR_ObjectPresent()) {
+                break;                       /* 确实恢复了 → 物块进去了 */
+            }
+            ir_last = true;                  /* 是毛刺: 当作还在遮光 */
+        }
+    }
+
+    AG_Stop();
+    g_route_abort = 0u;                      /* 见函数头: 消化蹭的过程中来的打断 */
+    printf("[FLOW] creep: travel=%.0fmm\r\n", travel * 1000.0f);
+}
+
 static void NF_Stage_Navigation(void)
 {
-    NF_RouteStep();
+    bool arrived = NF_RouteStep();
+
+    /* 采集点位: 正常到位(不是被 IR 打断、也不是超时) 但进料口还没反应 →
+     * 说明车停得离物块差一点, 向前蹭一小段把它顶进去。
+     * 被 IR 打断的那一路不用蹭 —— 物块已经进来了。 */
+    if (arrived && !Nav_LastAborted() && NF_NeedCreep(Nav_LastWaypointNo())) {
+        NF_CreepForward();
+    }
+
     NAV_count++;
     uint8_t need = (cur_stage == COLLECT_TROPHY) ? 3u : 5u;
     if (NAV_count == need)
@@ -373,6 +442,7 @@ static void NF_Stage_Navigation(void)
     if (NAV_count < need)
     {
         NLF_Request(Event_Navigation);
+
         return;
     }
     SystemMode_t next;

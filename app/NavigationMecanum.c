@@ -25,7 +25,7 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   1.72384f,0.25749f,0.03638f }, /*  6 季军点 */
 
     {   1.92988f,0.74853f,1.78417f },   /*  7 e 点 */
-    {   1.72166f,1.14528f,2.19026f },   /*  8 c 点 */
+    {   1.72166f,1.11528f,2.19026f },   /*  8 c 点 */
     {   1.37402f, 1.41876f, 2.74400f }, /*  9 d 点 */
     {   0.92016f, 1.46772f,-3.03864f }, /* 10 a 点 */
     {   0.49178f, 1.31843f,-2.47222f }, /* 11 b 点 */
@@ -34,25 +34,28 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   0.92926f, 0.02798f,-1.63934f }, /* 13 摆放d 点 */
     {   0.92926f, 0.02798f,-0.81427f }, /* 14 摆放c 点 */
     {   0.80875f, 0.62927f,0.0f }, /* 15 摆放a 点 */
-    {   0.50875f, 0.47927f,0.0f }, /* 16 摆放b 点 */
+    {   0.50875f, 0.42927f,0.0f }, /* 16 摆放b 点 */
 
     {   0.0f,  0.0f, 0.0f }, /* 17 回家点 */
 };
 
 uint8_t g_waypoint_count = 17u;
 
-/* ==================================================================
- * V1.23.0: 路线段打断
- *
- * `g_route_abort` (定义在 worker_task.c, 由 gripper_task 的 IR 进料置位)
- * 让 Nav_GoToWorld() 能中途放弃当前目标点。返回值仍是 bool ——
- * 被打算 = false, 靠 Nav_LastAborted() 区分"超时"和"被打断"。
- * ================================================================== */
+
 static bool s_nav_aborted = false;
+
+/** 上一次 Nav_FeDuanPoint() **走完**的点号 (1 基); 0 = 没走到 / 路线已走完。
+ *  给 worker_task.c 的"到位后向前蹭料"判断点位用 (见 NF_CREEP_WP[])。 */
+static uint8_t s_last_wp = 0u;
 
 bool Nav_LastAborted(void)
 {
     return s_nav_aborted;
+}
+
+uint8_t Nav_LastWaypointNo(void)
+{
+    return s_last_wp;
 }
 
 /* ==================================================================
@@ -111,28 +114,22 @@ static float NAV_Ramp(float cur, float target, float acc, float dt)
  * @param kp     近场比例增益 1/s。调大→尾巴更短; 抖/过冲就往下调
  * @retval 参考速度 m/s (世界系)
  */
-static float NAV_AxisRef(float err, float v_max, float a_brk, float kp,char choice)
+static float NAV_AxisRef(float err, float v_max, float a_brk, float kp, char choice)
 {
-    if (choice=='x')
-    {
-        float x_v  = kp * err;                          /* 近场参考 (线性, 过零连续) */
-        float x_vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
+    float v  = kp * err;                          /* 近场参考 (线性, 过零连续) */
+    float vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
 
-        if (x_v >  x_vc) x_v =  x_vc;
-        if (x_v < -x_vc) x_v = -x_vc;
+    /* ⚠ choice 目前只是留着占位: X/Y 的差异**全在入参里**(调用方分别传
+     *   NAV_KP_X_LIN/NAV_BRK_X 与 Y 的一套), 这里不分叉。
+     *   上一版按 'x'/'y' 写了两段逐字相同的分支, 且都没有兜底 return →
+     *   choice 是别的字符时"有路径不返回值"(-Wreturn-type), 返回值是垃圾。
+     *   将来真要按轴做**不同处理**再在这里分叉, 但必须给 else 兜底。 */
+    (void)choice;
 
-        return NAV_Clamp(x_v, -v_max, v_max);
-    }
-    if (choice == 'y')
-    {
-        float y_v  = kp * err;                          /* 近场参考 (线性, 过零连续) */
-        float y_vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
+    if (v >  vc) v =  vc;
+    if (v < -vc) v = -vc;
 
-        if (y_v >  y_vc) y_v =  y_vc;
-        if (y_v < -y_vc) y_v = -y_vc;
-
-        return NAV_Clamp(y_v, -v_max, v_max);
-    }
+    return NAV_Clamp(v, -v_max, v_max);
 }
 #endif /* NAV_XY_PROFILE */
 
@@ -262,9 +259,6 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
             Send_commandmotor(&res);
 
-            /* 到达: 三轴误差均入容差 **且指令速度已收下来**, 连续 NAV_ARRIVE_TICKS 拍。
-             * 速度门限是必要的: 曲线规划会带着 ~0.3 m/s 穿过容差区, 只看位置就会在
-             * 还在跑的时候判"到了", 之后的滑行把车带出容差。 */
             if (fabsf(ex) <= NAV_TOL_XY && fabsf(ey) <= NAV_TOL_XY &&
                 fabsf(eyaw) <= NAV_TOL_YAW &&
                 fabsf(vx_cmd) <= NAV_ARRIVE_VMAX && fabsf(vy_cmd) <= NAV_ARRIVE_VMAX)
@@ -349,8 +343,11 @@ bool Nav_FeDuanPoint(void)
     }
 
     if (s_idx >= count) {
-        return true;                    /* 路线已走完, 恒真 */
+        s_last_wp = 0u;                 /* 路线已走完: 清掉"刚走过的点号" */
+        return true;                    /* 恒真 */
     }
+
+    s_last_wp = (uint8_t)(s_idx + 1u);  /* 本段走的点号 (1 基), 给蹭料判断用 */
 
     if (!Nav_GoToWorld(g_waypoints[s_idx].x,
                        g_waypoints[s_idx].y,
@@ -363,6 +360,7 @@ bool Nav_FeDuanPoint(void)
         }
         printf("[NAV] 分点导航第 %u 点超时, 游标停在原点待重试\r\n",
                (unsigned)s_idx);
+        s_last_wp = 0u;                 /* 超时没走到, 不算"到过这个点" */
         return false;
     }
 
