@@ -78,10 +78,10 @@ extern World_Dir_t Self_Dir;
 #ifndef NAV_XY_PROFILE
 #define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
 #endif
-#define NAV_KP_X_LIN    5.3f
-#define NAV_KP_Y_LIN    5.3f
-#define NAV_BRK_X       0.9f
-#define NAV_BRK_Y       0.9f
+#define NAV_KP_X_LIN    3.3f
+#define NAV_KP_Y_LIN    0.0f
+#define NAV_BRK_X       0.75f
+#define NAV_BRK_Y       0.0f
 #define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 

@@ -10,12 +10,14 @@
 
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES ARM_TOOLCHAIN_PATH)
 
 # Toolchain discovery: honor -DARM_TOOLCHAIN_PATH, otherwise look in the
 # locations STM32CubeCLT / the standalone installer use.
 if(NOT DEFINED ARM_TOOLCHAIN_PATH)
   file(GLOB CUBECLT_CANDIDATES "C:/ST/STM32CubeCLT*/GNU-tools-for-STM32/bin"
                                "D:/STM32CubeCLT*/GNU-tools-for-STM32/bin"
+                               "D:/DevEnv/GNU-tools-for-STM32/bin"
                                "C:/Program Files/STMicroelectronics/STM32Cube/STM32CubeCLT*/GNU-tools-for-STM32/bin"
                                "E:/Tools/xpack-arm-none-eabi-gcc/*/bin")
   list(SORT CUBECLT_CANDIDATES)

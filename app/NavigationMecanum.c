@@ -25,10 +25,10 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   1.72384f,0.25749f,0.03638f }, /*  6 季军点 */
 
     {   1.92988f,0.74853f,1.78417f },   /*  7 e 点 */
-    {   1.72166f,1.11528f,2.19026f },   /*  8 c 点 */
-    {   1.37402f, 1.41876f, 2.74400f }, /*  9 d 点 */
-    {   0.92016f, 1.46772f,-3.03864f }, /* 10 a 点 */
-    {   0.49178f, 1.31843f,-2.47222f }, /* 11 b 点 */
+    {   1.75166f,1.08528f,2.09026f },   /*  8 d 点 */
+    {   1.37402f, 1.41876f, 2.74400f }, /*  9 c 点 */
+    {   0.92016f, 1.46772f,-3.03864f }, /* 10 b 点 */
+    {   0.49178f, 1.29843f,-2.47222f }, /* 11 a 点 */
 
     {   0.98947f,-0.46437f,-1.58871f }, /* 12 摆放e 点 */
     {   0.92926f, 0.02798f,-1.63934f }, /* 13 摆放d 点 */
@@ -41,7 +41,13 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
 
 uint8_t g_waypoint_count = 17u;
 
-
+/* ==================================================================
+ * V1.23.0: 路线段打断
+ *
+ * `g_route_abort` (定义在 worker_task.c, 由 gripper_task 的 IR 进料置位)
+ * 让 Nav_GoToWorld() 能中途放弃当前目标点。返回值仍是 bool ——
+ * 被打算 = false, 靠 Nav_LastAborted() 区分"超时"和"被打断"。
+ * ================================================================== */
 static bool s_nav_aborted = false;
 
 /** 上一次 Nav_FeDuanPoint() **走完**的点号 (1 基); 0 = 没走到 / 路线已走完。
@@ -259,6 +265,9 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
             Send_commandmotor(&res);
 
+            /* 到达: 三轴误差均入容差 **且指令速度已收下来**, 连续 NAV_ARRIVE_TICKS 拍。
+             * 速度门限是必要的: 曲线规划会带着 ~0.3 m/s 穿过容差区, 只看位置就会在
+             * 还在跑的时候判"到了", 之后的滑行把车带出容差。 */
             if (fabsf(ex) <= NAV_TOL_XY && fabsf(ey) <= NAV_TOL_XY &&
                 fabsf(eyaw) <= NAV_TOL_YAW &&
                 fabsf(vx_cmd) <= NAV_ARRIVE_VMAX && fabsf(vy_cmd) <= NAV_ARRIVE_VMAX)
