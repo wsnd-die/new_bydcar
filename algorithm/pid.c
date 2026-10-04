@@ -12,6 +12,8 @@
             (input) = -(max);   \
     } while (0)
 
+fp32 filter_data;
+
 /**
  * @brief  PID 初始化
  * @param  pid      句柄指针
@@ -122,3 +124,10 @@ void PID_clear(pid_type_def *pid)
     pid->Iout = 0.0f;
     pid->Dout = 0.0f;
 }
+
+float PID_Filter(fp32 alpha,fp32 data)
+{
+    filter_data=alpha*data+(1-alpha)*filter_data;
+return filter_data;
+}
+

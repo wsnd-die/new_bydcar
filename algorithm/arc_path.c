@@ -67,6 +67,14 @@ bool Arc_Run(void)
     {
         Send_commandmotor(&cmd);    /* 每拍重发，防单帧丢失 */
 
+        /* V1.23.0 打断：外部（IR 进料）要求立刻收尾，切下一段路线。
+         * 消费掉请求后走**正常收尾**路径（仍然 return true）—— 不要借下面
+         * 那个 false，它的语义是「参数非法」，会打出误导日志。 */
+        if (g_route_abort) {
+            g_route_abort = 0u;
+            break;
+        }
+
         uint32_t elapsed = HAL_GetTick() - t0;
 
         if ((float)elapsed * 0.001f >= sweep_time_s) {

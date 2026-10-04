@@ -26,17 +26,13 @@ typedef enum {
      Event_Collect_L              = 2,   /* 循迹左 (收集物块) */
      Event_Collect_R              = 3,   /* 循迹右 (收集奖杯) */
      Event_STOP                 = 4,   /* 停止 */
-     Event_STEERING_ROTATE      = 5,   /* 舵机旋转 */
+     Event_START              = 5,   /* 启动 */
      Event_QRCode               = 6,   /* 识别二维码 → SetQR(idx) */
      Event_FindCircle           = 7,   /* 找圆 */
      Event_PickUp               = 8,   /* 拾取(转盘颜色收集) */
      Event_PlaceDown            = 9,   /* 放置 */
      Event_GoHome               = 10,   /* 回家 */
-
-     /* ---- V1.13.0 追加（只能往后加，保证既有值不变）---- */
      Event_ArcRun               = 11,   /* 按 Arc_SetParam 的参数跑一段圆弧 */
-
-     /* ---- V1.20.0 追加 ---- */
 
 } SystemMode_t;
 

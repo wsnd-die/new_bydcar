@@ -43,31 +43,50 @@ extern World_Dir_t Self_Dir;
  * 全部为初版整定值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
 #define NAV_DT                 0.01f   /* 名义控制周期 s (执行器内 osDelay(5) 使实际 ~15ms) */
-#define NAV_LOOP_TICKS         10u     /* osDelay(10) → 名义 100Hz */
+#define NAV_LOOP_TICKS         5u     /* osDelay(10) → 名义 100Hz */
 #define NAV_TIMEOUT_MS         10000u  /* 单点超时 ms */
-#define NAV_KP_XY              1.2f    /* 平移 P: 0.4m 误差 → 0.4 m/s */
-#define NAV_KD_XY              0.0f    /* 平移 D: 首版关 (OPS9 噪声放大风险) */
-#define NAV_KP_YAW             4.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
-#define NAV_KD_YAW             0.3f    /* 航向 D: 首版关 */
-#define NAV_VMAX_XY            1.6f    /* 平移速度限幅 m/s */
+#define NAV_KP_XY              3.2f    /* 平移 P: 0.4m 误差 → 0.4 m/s */
+#define NAV_KD_XY              0.5f    /* 平移 D: 首版关 (OPS9 噪声放大风险) */
+#define NAV_KP_YAW             5.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
+#define NAV_KD_YAW             0.27f    /* 航向 D: 首版关 */
+#define NAV_VMAX_X            2.0f    /* x平移速度限幅 m/s */
+#define NAV_VMAX_Y            2.0f    /* y平移速度限幅 m/s */
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
-#define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
+#define NAV_ACC_XY             2.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
 #define NAV_TOL_XY             0.02f   /* 到达容差 3cm */
 #define NAV_TOL_YAW            0.05f   /* 到达容差 ~2.9° */
-#define NAV_ARRIVE_TICKS       3u      /* 连续 5 拍判到达 (抗单帧抖动) */
+#define NAV_YAW_DEADBAND       0.0175f /* rad ≈ 1.0° (取容差的 1/3) */
+#define NAV_ARRIVE_TICKS       5u      /* 连续 5 拍判到达 (抗单帧抖动) */
 #define NAV_MAX_INVALID_TICKS  20u     /* OPS9 离线容忍 0.3s, 超限零速保持 */
 
-/**
- * 分点导航路径点表（世界坐标系）。
+/* ============================================================
+ * 平移轴速度规划 —— V1.24.1
  *
- * 每个元素: { X(m), Y(m), yaw(rad) }，yaw 用角度写更直观: 90.0f * NAV_DEG2RAD。
+ *      v_ref = clamp(Kp·e, ±√(2·a·|e|), ±V_max)
  *
- * @warning 表里的坐标是 **2026-09-14 旧场地**的实测值，上机前必须逐点复核。
- *          配合 worker_task.c 的 NF_AUTOSTART=1 时，这张表就是"上电即发车"
- *          的路线，填错会直接把车开出去。
- * @note    改完表记得同步 `g_waypoint_count`（Nav_FeDuanPoint 的游标上界）。
- */
+ * 近场线性 P: 和原来的纯 P 一样温和、过零连续, 不会在点位上抖。
+ * 远场制动曲线做**上限**: |v| ≤ √(2·a·|e|) 即"此刻还刹得住", 补上纯 P 缺的
+ * 减速约束, 使提速与不过冲不再矛盾。
+ *
+ * @warning 曲线**只能当上限, 不能当参考** (V1.24.0 的错就在这): 当参考时它在
+ *          e→0 处等效增益发散, 且死区边界是 "0 → √(2·a·deadband)" 的阶跃,
+ *          位置噪声一到就变成**到点来回晃**, 比纯 P 还差。
+ *
+ * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
+ * ============================================================ */
+#ifndef NAV_XY_PROFILE
+#define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
+#endif
+#define NAV_KP_X_LIN    3.3f
+#define NAV_KP_Y_LIN    0.0f
+#define NAV_BRK_X       0.75f
+#define NAV_BRK_Y       0.0f
+#define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
+                                   * 否则会在容差边缘一直判定不上、卡着不走 */
+
+
+
 extern World_Dir_t g_waypoints[NAV_WAYPOINT_MAX];
 extern uint8_t      g_waypoint_count;
 
@@ -108,12 +127,14 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
  * @note 与旧副本 (4eedf6a) 的差异：旧版把第 13 点之后的两点塞在同一次调用里
  *       （`PontIntex == 13` 的特判），这里不再特判，表中 13/14 号就是普通点。
  *
- * @warning 游标只在**成功**时推进，超时的点下次会重试。而调用方
- *          NF_Stage_Navigation() 目前**忽略本函数的返回值** —— 若某个点因
- *          OPS9 离线等原因持续失败，流程会永远卡在 Navigation 阶段。
- *          真出现这种情况，需要给本函数加失败上限计数，或让调用方检查返回值。
+ * @note   V1.23.0 起游标在**两种**情况下都推进：到达，或**被打断**
+ *         （`Nav_LastAborted()`）—— 打断的语义是"改奔下一个点"，不是重试。
+ *         只有**超时**才不推进、下次重试。
  *
- * @return true   本点已到达（或整条路线已走完）
+ * @warning 游标只加不校验：一轮物料采集有 5 次 IR 边沿 = 烧掉 5 个点。
+ *          路线只有 `g_waypoint_count` 个点，用光后本函数恒返回 true 空转。
+ *
+ * @return true   本点已到达 / 被打断跳过 / 整条路线已走完
  * @return false  本点超时未到达（游标不推进，下次重试）
  */
 bool Nav_FeDuanPoint(void);
@@ -133,6 +154,17 @@ bool Nav_FeDuanPoint(void);
  *       与本实现语义完全不同 —— 本头文件此前贴的是旧版文档，已按现实现更正。
  */
 bool Nav_MoveBody(float target_x, float target_y, float target_yaw);
+
+/**
+ * @brief  上一次 `Nav_GoToWorld()` 是不是被**打断**的（而不是超时）。
+ *
+ *  V1.23.0 起 `Nav_GoToWorld()` 可以被 `g_route_abort`（见 worker_task.h）
+ *  中途打断，此时它仍然返回 `false` —— 靠本函数区分"超时"和"被打断"。
+ *
+ * @warning **必须在关心那次 `Nav_GoToWorld()` 之后立刻调用**，中间不能夹别的
+ *          会走导航的调用（`Place()`、`Nav_MoveBody()` 等都会重置这个标记）。
+ */
+bool Nav_LastAborted(void);
 
 /**
  * @brief 循迹完成后按实测位置校准 a 点 / 亚军点

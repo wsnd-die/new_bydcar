@@ -12,6 +12,7 @@
 #include "block_basic.h"      /* 转盘 / 夹爪 / 形状 */
 #include "ColorIdentif.h"     /* g_tt */
 #include "NX_uart.h"          /* NX_GetTrophyRank */
+#include "worker_task.h"      /* Route_AbortRequest —— IR 进料推进导航 (V1.23.0) */
 
 /* ================================================================
  * 时序常量 —— ★ 全部是占位值, 上机实测后调
@@ -21,7 +22,7 @@
 #define COLLECT_SETTLE_MS        200u
 /** 等一个物块进料的上限。超时则该槽不写数据, 直接跳下一槽。
  *  @note 奖杯分支的名次投票就发生在这一段等待里, 所以它同时是投票窗口的长度。 */
-#define COLLECT_IR_TIMEOUT_MS   10000u
+#define COLLECT_IR_TIMEOUT_MS   5000u
 
 /* ================================================================
  * 状态
@@ -32,7 +33,7 @@ static volatile bool s_running = false;
 static volatile bool s_done    = false;
 
 /** 本次采集跑哪条分支。由 BlockCollect_SetStage() 设定, 不自动翻转。 */
-static volatile BlockCollectStage_t s_stage = COLLECT_MATERIAL;
+static volatile BlockCollectStage_t s_stage = COLLECT_BLOCK;
 /* ================================================================
  * 内部
  * ================================================================ */
@@ -97,6 +98,14 @@ static bool wait_block_entered(uint32_t timeout_ms, uint8_t *rank_out)
         }
 
         if (IR_ObjectEntered()) {
+            /* V1.23.0: 物块一进料口 → 打断当前路线段, 立刻改奔下一个点。
+             * 这是"采集推进导航"的唯一通道 (见 worker_task.h 的 g_route_abort)。
+             * ⚠ 这里**刻意不加 printf** —— 本函数跑在 gripper_task 里, 那个任务
+             *   只有 1KB 栈且 configCHECK_FOR_STACK_OVERFLOW 未定义, 一次
+             *   printf 就能吃掉几百字节, 溢出**没有任何提示**。
+             *   打断的日志打在 NLF_TASK 侧 (Nav_FeDuanPoint 里)。 */
+            Route_AbortRequest();
+
             if (rank_out) {
                 uint8_t best = 0u;
                 for (uint8_t i = 1u; i <= 3u; i++) {
@@ -163,16 +172,16 @@ static void identify_slot(uint8_t slot)
  *      块4进  → IR → 夹紧槽4 → 转到槽5 → 识别槽4
  *      块5进  → IR → 夹紧槽5 → 转 340°关门 → 识别槽5
  */
-static void collect_all_slots(void)
+static void collect_slots(void)
 {
 
     TT_Init();
-    if (s_stage == COLLECT_MATERIAL)
+    if (s_stage == COLLECT_BLOCK)
     {
         printf("[COLLECT] waiting cone\r\n");
         if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
             printf("[COLLECT] no cone, abort\r\n");
-            return;     /* 圆锥都没来,  直接放弃这一轮 */
+            return;     /* 圆锥没来 */
         }
         (void)BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
 
@@ -185,15 +194,12 @@ static void collect_all_slots(void)
 
             (void)BlockBasic_GripperClamp(slot);
             osDelay(COLLECT_SETTLE_MS);
-
+            identify_slot(slot);
             if (slot < BLOCK_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
                 Servo_Angle(BLOCK_CLOSE_DOOR);
             }
-            osDelay(COLLECT_SETTLE_MS);     /* 等转盘停稳再读 */
-
-            identify_slot(slot);
         }
     }
     else
@@ -204,8 +210,6 @@ static void collect_all_slots(void)
 
         for (uint8_t slot = TROPHY_FIRST_SLOT; slot <= TROPHY_LAST_SLOT; slot++)
         {
-            /* 等物块进来的同时把 NX 报的名次投出来 —— 名次在**夹住之前**就定好。
-             * 投票窗口 = 这段等待, 也就是"物块完全进来前的一段时间"。 */
             uint8_t rank = 0u;
             if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, &rank)) {
                 printf("[COLLECT] trophy slot %u: no block, skip\r\n", (unsigned)slot);
@@ -229,6 +233,7 @@ static void collect_all_slots(void)
                 Servo_Angle(TROPHY_CLOSE_DOOR);
             }
         }
+        BlockBasic_LiftTo(UP, 25);
     }
 }
 
@@ -253,7 +258,7 @@ void BlockCollect_Start(void)
 void BlockCollect_Reset(void)
 {
     s_req     = false;
-    s_running = false;
+    // s_running = false;
     s_done    = false;
 }
 
@@ -270,7 +275,7 @@ void BlockCollect_Poll(void)
     s_running = true;
     s_done    = false;
 
-    collect_all_slots();
+    collect_slots();
 
     s_running = false;
     s_done    = true;

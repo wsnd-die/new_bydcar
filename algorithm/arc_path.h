@@ -41,9 +41,12 @@ void Arc_SetParam(float radius_m, float v_mps, float sweep_deg);
 
 /**
  * @brief  阻塞式跑完一段圆弧。
- * @return true = 正常跑完 swept 角度；false = 参数非法，未驱动。
+ * @return true = 正常跑完 swept 角度（**含被中途打断的情况**）；false = 参数非法，未驱动。
  * @note   与 Nav_MoveBody() 同风格。返回前一定已发出零速。
  *         本函数自己下发 `Send_commandmotor()`，不经 FC_TASK。
+ * @note   V1.23.0 起可被 `g_route_abort`（见 app/worker_task.h）**中途打断**：
+ *         读到就立刻收尾、发出零速、按正常成功返回。打断**不**走 false —— 那个
+ *         false 是留给"参数非法"的。
  */
 bool Arc_Run(void);
 

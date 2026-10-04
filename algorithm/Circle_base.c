@@ -18,11 +18,11 @@ float g_circle_speed = 1.0f;  /* 速度系数: 1.0=快(左侧), 0.4=慢(右侧) 
 
 /* 按 xy 圆心偏差分档调速: 远(>20px)快速接近, 近(≤20px)慢速微调 */
 #define CIRCLE_XY_FAST_TH   10.0f   /* 偏差阈值 (像素) */
-#define CIRCLE_XY_V_FAST    0.15f   /* 远距离速度 (m/s) */
-#define CIRCLE_XY_V_SLOW    0.02f   /* 近距离速度 (m/s) */
+#define CIRCLE_XY_V_FAST    0.3f   /* 远距离速度 (m/s) */
+#define CIRCLE_XY_V_SLOW    0.015f   /* 近距离速度 (m/s) */
 
 /* 找圆稳定: 连续 'O' 确认次数, 达到才认为已居中, 防止方向抖动误判/一直动 */
-#define CIRCLE_O_STABLE_CNT  10U
+#define CIRCLE_O_STABLE_CNT  3U
 static uint8_t s_o_cnt = 0U;
 static float s_sum_x = 0.0f;   /* 确认期间圆心偏差累加 */
 static float s_sum_y = 0.0f;

@@ -103,7 +103,7 @@ const osThreadAttr_t gripper_attributes = {
 osThreadId_t FC_TASKHandle;
 const osThreadAttr_t FC_TASK_attributes = {
   .name = "FC_TASK",
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityNormal3,
   .stack_size = 256 * 4
 };
 /* Definitions for NLF_TASK */
@@ -166,6 +166,7 @@ void MX_FREERTOS_Init(void) {
    * HAL_UARTEx_ReceiveToIdle_DMA 返回 HAL_BUSY 直接退出, 结果是状态被清、
    * 接收却没重挂。 */
   MSP_Color_Init();
+  HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_4);
 
   /* USER CODE END Init */
 
@@ -302,7 +303,7 @@ void ops9imu_fuction(void *argument)
     active_locator->update();
     active_locator->get_pose(&o_pose);
     // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
-    osDelay(100);
+    osDelay(5);
   }
   /* USER CODE END ops9imu_fuction */
 }
@@ -316,7 +317,6 @@ void ops9imu_fuction(void *argument)
 /* USER CODE END Header_gripper_task */
 void gripper_task(void *argument)
 {
-  HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_4);
   if (!SCS_BusInit()) {
     printf("[scs] bus init FAIL: huart5 not initialized\r\n");
     for (;;) { osDelay(100); }
@@ -324,18 +324,18 @@ void gripper_task(void *argument)
   while (!BPlace_SetZero());
   printf("[scs] init SUCSESS: huart5 initialized\r\n");
   BlockBasic_TurntableTo(1);
-  Servo_SetAngle(40);
+  Servo_SetAngle(39);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
   }
-  // BlockBasic_LiftTo(UP,60);
+  // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
+  BlockBasic_LiftTo(UP,3);
   printf("[scs] gripper init done\r\n");
   for (;;)
   {
     BlockCollect_Poll();
 
     // MSP_Color_DebugPoll();
-
     osDelay(20);
   }
   /* USER CODE END gripper_task */
@@ -355,12 +355,7 @@ void FC_TASK(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    FC_Fuction();
-
-    /* @note 这里原来有个 `NX_GetTrophyRank(&rank)` + printf 的调试打印, 已摘掉
-     *       (V1.21.0) —— 那个函数是**消费式**的 (读后清 trophy_fresh), 而采集
-     *       侧的 wait_trophy_rank() 才是真正的消费者。两边同时调会互相抢帧,
-     *       结果是谁都拿不稳。调试时想再开, 请临时把采集那边停掉再开这里。 */
+    // FC_Fuction();
     osDelay(10);
   }
   /* USER CODE END FC_TASK */
@@ -425,13 +420,10 @@ void KEY_TASK(void *argument)
 
     /* 用 Key_WasPressed (边沿, 读后清) 而不是 Key_IsPressed (电平):
      * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
-    if (Key_WasPressed(KEY_START))
+    if (Key_WasPressed(KEY_START)&& !BlockCollect_IsRunning())
     {
-      /* V1.20.0: 启动键改为先跑物块采集 (槽 2~5 夹取+读形+读色),
-       * 采集完由 NF_Stage_Collect() 自动落回 Event_Navigation,
-       * 后面的顺序表 (NF_STAGES[]) 原样不动。 */
-      printf("[KEY] 启动键 -> NLF_Request(Event_Collect)\r\n");
-      NLF_Request(Event_Navigation);
+      printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
+      NLF_Request(Event_START);
     }
 
     osDelay(10);

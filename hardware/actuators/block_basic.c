@@ -6,7 +6,7 @@
 #include "Common_used.h"
 #include "block_basic.h"
 #include "emm_5v.h"
-#include "NavigationMecanum.h"
+#include "mecanum.h"        /* Mecanum_MoveBodyPos —— Place() 的定距移动 */
 #include "key.h"
 #include "servo_scs.h"      /* 转盘 STS3032 总线舵机: SCS_WritePosEx (V1.16.0) */
 #define CLAMP_FLOAT(v, lo, hi)  ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
@@ -338,30 +338,33 @@ void Servo_SetAngle(float Angle)
 /* K230 圆心像素 → 车体横向位移 (m/像素)。比例/方向需实测调, 反了取负 */
 #define PLACE_CIRCLE_SCALE_M  0.001f
 
+/** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
+ *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
+#define PLACE_MOVE_TIMEOUT_MS   1500u
+
 void Place(char dir,float x,float y,uint16_t height)
 {
-   // MecanumMove_t move;
     if (dir == 'O')
     {
-        /* 圆心 xy → 放置补量 (保留) */
-        float fwd  = 0.068f - y * PLACE_CIRCLE_SCALE_M;
-        float left = -x * PLACE_CIRCLE_SCALE_M;
-        // if (Mecanum_CalculateMove(&Place_config, fwd, left, 0.0f, &move))
-        // {
-        //     Mecanum_ExecuteMove(&Place_config, &move);
-        //     osDelay((uint32_t)(move.duration_s * 2000.0f) + 50U);
-        // }
-        Nav_MoveBody(fwd,  left, 0 ) ;
-        BlockBasic_LiftTo(DOWN,height);
-        osDelay(950);
 
-        /* 后退 0.05 m（车体坐标：-X 为后退） */
-        // if (Mecanum_CalculateMove(&Place_config, -0.145f, 0.0f, 0.0f, &move))
-        // {
-        //     Mecanum_ExecuteMove(&Place_config, &move);
-        //     osDelay((uint32_t)(move.duration_s * 2000.0f) + 50U);
-        // }
-        Nav_MoveBody(-0.05,  0, 0 ) ;
+        float fwd  = 0.058f - y * PLACE_CIRCLE_SCALE_M;
+        float left = -x * PLACE_CIRCLE_SCALE_M;
+
+        /* 位置模式定距走 + **等电机到位反馈** (Emm_V5_Is_Reached 查 0x3A 的 bit1)。
+         * 四个轮子都报到位就提前返回; 只有卡住/掉线才等满 PLACE_MOVE_TIMEOUT_MS。 */
+        if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
+            printf("[PLACE] 前移没等齐到位 (超时)\r\n");
+        }
+        if (height!=0)
+        {
+            BlockBasic_LiftTo(DOWN, height);
+            osDelay(900);
+        }
+
+        /* 后退 0.05 m (车体 -X 方向) */
+        if (!Mecanum_MoveBodyPos(-0.05f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
+            printf("[PLACE] 后退没等齐到位 (超时)\r\n");
+        }
     }
 }
 

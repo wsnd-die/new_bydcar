@@ -26,6 +26,15 @@
 volatile uint8_t g_angle_ctrl_enable = 0;    /* 1 = 打开角度环 */
 volatile float   g_angle_target_yaw  = 0.0f; /* 目标航向 (deg), 与 g_hwt_imu_yaw 同量纲 */
 
+/* V1.23.0: 路线段打断。语义与用法见 worker_task.h 的说明。 */
+volatile uint8_t g_route_abort = 0u;
+volatile static uint8_t NAV_count=0;
+
+void Route_AbortRequest(void)
+{
+    g_route_abort = 1u;
+}
+
 
 osThreadId_t fcTaskHandle  = NULL;
 osThreadId_t nlfTaskHandle = NULL;
@@ -86,7 +95,7 @@ void Angle_Fuction(void)
 }
 void FC_Fuction(void)
 {
-    NX_RequestMode(NX_MODE_CIRCLE);
+    NX_SetMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
     osDelay(FC_TASK_PERIOD_MS);
 }
@@ -145,7 +154,7 @@ static const Jang_type NF_RANK[NF_RANK_COUNT] = {
  * 摆放阶段已改成反查 g_tt.trophy[] (见 ColorIdentif.c 的 SlotByTrophy)。 */
 
 /** 各奖杯放置时的丝杆高度 (mm)。。 */
-static const uint16_t NF_PLACE_HEIGHT[4] = { 0u, 37u, 28u, 17u };
+static const uint16_t NF_PLACE_HEIGHT[4] = { 0u, 5u, 5u, 5u };
 
 /** 五个槽位里实际放的物块颜色。
  *  ★ NX 接入点: 换成 NX 回传的「收集到的颜色物块」。
@@ -172,17 +181,17 @@ typedef struct {
 
 
 static const NF_Stage_t NF_STAGES[] = {
-    { Event_Navigation, 30u },
+    { Event_Navigation, 16u },
 };
 #define NF_STAGE_COUNT  (sizeof(NF_STAGES) / sizeof(NF_STAGES[0]))
 
-#if 0   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
-static const NF_Stage_t NF_STAGES[] = {
-    { Event_LinFolL,    1u },   /* 左循迹: 收集物块 */
-    { Event_FindCircle, 5u },   /* 找圆 ×5: 一个个放物块 */
-    { Event_LinFolR,    1u },   /* 右循迹: 收集奖杯 */
-    { Event_PlaceDown,  3u },   /* 放奖杯 ×3 */
-};
+#if 1   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
+// static const NF_Stage_t NF_STAGES[] = {
+//     { Event_Collect_R, 1u },
+//     { Event_PlaceDown, 3u },
+//     { Event_Collect_L,    1u },
+//     { Event_FindCircle,  5u },
+// };
 #endif
 
 /* 流程进度。对应旧 NLF_TASK 的 P_Nava / NavafterNum[P_Nava] / i / flag_finish。 */
@@ -195,7 +204,7 @@ static bool    s_flow_seeded = false; /* NF_FlowSeed() 的一次性门闩 */
 /** 找圆阶段的等待上限。Circle_Follow() 是单拍函数, 靠外层循环推进;
  *  上位机没接 / 没识别到圆心时 g_circle_dir 永远不会变成 'O',
  *  没有这道超时流程会永久卡死在这里。 */
-#define NF_CIRCLE_TIMEOUT_MS   30000u
+#define NF_CIRCLE_TIMEOUT_MS   60000u
 
 /** 上电是否自动开跑。0 = 等调度器收到事件再跑。 */
 #ifndef NF_AUTOSTART
@@ -263,11 +272,109 @@ static bool NF_DispatchNext(SystemMode_t *out)
  *        所有阶段最终都回到 Event_Navigation 这个"中继站", 由它去查顺序表。
  * ================================================================== */
 
-/** 中继站: 跑完一段导航, 派发顺序表里的下一项; 表跑完就回家。 */
+/* ==================================================================
+ * 路线源 —— 编译期二选一 (V1.23.0)
+ *
+ *   0 (默认) = 分点导航: 每次走 g_waypoints[] 的一个点 (Nav_FeDuanPoint)
+ *   1        = 圆弧模式: 那 8 个点位**整个不导航**, 改成下面这张 4 段表
+ *
+ * 用户要求(2026-10-02): 以后收集物块/奖杯不一定走定点, 可能改跑圆弧,
+ * 所以要能一处切换。宏带 #ifndef 守卫, 也可以从构建系统传
+ * `-DNF_ROUTE_ARC=1` 覆盖。
+ * ================================================================== */
+#ifndef NF_ROUTE_ARC
+#define NF_ROUTE_ARC  0
+#endif
+
+#if NF_ROUTE_ARC
+/**
+ * 圆弧模式的路线表 —— 逐段执行, 交替"导航到起点"与"跑一段弧"。
+ *
+ * 弧替代的点位:
+ *   [1] 物料弧 —— g_waypoints[] 下标 6~10 的 e/c/d/a/b
+ *   [3] 奖杯弧 —— 下标 0~2 的 奖杯二维码点/亚军点/亚军点
+ *
+ * ★ 起点坐标暂借现有表里的点, **待现场示教**。
+ * ★ 弧参数先用 Arc_SetParam 的默认那组, **待标定** (360°@0.15m/s ≈ 21 秒)。
+ */
+static const struct {
+    uint8_t     arc;          /* 0 = 导航到 start; 1 = 跑一段弧 */
+    World_Dir_t start;        /* arc == 0 时用 */
+    float       r, v, sweep;  /* arc == 1 时用 */
+} NF_ARC_ROUTE[] = {
+    /* ★待示教: 物料弧起点 (暂借 6 号"季军点") */
+    { 0u, { 1.72384f, 0.25749f, 0.03638f }, 0.0f, 0.0f, 0.0f },
+    /* ★待标定: 物料弧 */
+    { 1u, { 0.0f, 0.0f, 0.0f }, ARC_DEF_RADIUS, ARC_DEF_SPEED, ARC_DEF_SWEEP },
+    /* ★待示教: 奖杯弧起点 (暂借 1 号"奖杯二维码点") */
+    { 0u, { 0.38503f, -1.20312f, -0.76168f }, 0.0f, 0.0f, 0.0f },
+    /* ★待标定: 奖杯弧 */
+    { 1u, { 0.0f, 0.0f, 0.0f }, ARC_DEF_RADIUS, ARC_DEF_SPEED, ARC_DEF_SWEEP },
+};
+#define NF_ARC_ROUTE_COUNT  (sizeof(NF_ARC_ROUTE) / sizeof(NF_ARC_ROUTE[0]))
+#endif /* NF_ROUTE_ARC */
+
+/**
+ * @brief 走一段路线。`true` = 这一段走完了 (或被跳过)。
+ *
+ * @note  这是**路线源**的唯一入口, 编译期在"分点导航"和"圆弧"之间切换。
+ *        换成别的走法 (循迹、光流…) 时只改这里, 流程一行不用动。
+ * @note  两种模式下被 `g_route_abort` 打断的语义一致: 立刻收尾、返回,
+ *        由调用方决定要不要推进 (见 Nav_LastAborted / NF_Stage_Navigation)。
+ */
+static bool NF_RouteStep(void)
+{
+#if NF_ROUTE_ARC
+    static uint8_t s_arc_idx = 0u;
+
+    if (s_arc_idx >= NF_ARC_ROUTE_COUNT) {
+        return true;                    /* 路线走完, 空转 (与分点导航同语义) */
+    }
+
+    const typeof(NF_ARC_ROUTE[0]) *st = &NF_ARC_ROUTE[s_arc_idx];
+
+    bool ok;
+    if (st->arc) {
+        Arc_SetParam(st->r, st->v, st->sweep);
+        ok = Arc_Run();
+        if (!ok) {
+            printf("[FLOW] 第 %u 段弧参数非法, 跳过\r\n", (unsigned)s_arc_idx);
+        }
+    } else {
+        ok = Nav_GoToWorld(st->start.x, st->start.y, st->start.yaw);
+    }
+
+    if (ok) {
+        s_arc_idx++;
+    }
+    return ok;
+#else
+    return Nav_FeDuanPoint();           /* 默认: 一次走一个 g_waypoints[] 点 */
+#endif
+}
+
+/**
+ * 中继站: 走一段路线, 派发顺序表里的下一项; 表跑完就回家。
+ *
+ * V1.23.0: 走路线的那一句由 `Nav_FeDuanPoint()` 换成了 `NF_RouteStep()`
+ * (路线源可编译期切换)。**除此之外一字未改** —— 收集与导航的解耦不在这
+ * 条路径上, 而在 `NF_Stage_Collect()` 不再阻塞 (见该函数)。
+ */
+static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
 static void NF_Stage_Navigation(void)
 {
-    Nav_FeDuanPoint();
-
+    NF_RouteStep();
+    NAV_count++;
+    uint8_t need = (cur_stage == COLLECT_TROPHY) ? 3u : 5u;
+    if (NAV_count == need)
+    {
+        printf("[FLOW] %s collected\r\n",(cur_stage == COLLECT_TROPHY) ? "trophy" : "block");
+    }
+    if (NAV_count < need)
+    {
+        NLF_Request(Event_Navigation);
+        return;
+    }
     SystemMode_t next;
     if (NF_DispatchNext(&next)) {
         printf("[FLOW] -> %d (stage %u, left %u)\r\n",
@@ -281,67 +388,45 @@ static void NF_Stage_Navigation(void)
 }
 
 
-static void NF_Stage_LinFolL(void)
-{
-    printf("[FLOW-STUB] LinFolL (左循迹/收集物块) 未接线, 直接跳过\r\n");
-
-    AG_Stop();
-    Nav_CalibrateAfterTrace(false);
-    NLF_Request(Event_Navigation);
-}
-
-/**
- * @brief [打桩] 右循迹 —— 收集奖杯。
- * @note  同 NF_Stage_LinFolL(), 旧完成条件是 g_trophy_done==1。
- */
-static void NF_Stage_LinFolR(void)
-{
-    printf("[FLOW-STUB] LinFolR (右循迹/收集奖杯) 未接线, 直接跳过\r\n");
-
-    AG_Stop();
-    Nav_CalibrateAfterTrace(true);      /* TODO: 打桩 */
-    NLF_Request(Event_Navigation);
-}
-
 /** 采集阶段的等待上限。4 个槽 × (IR 超时 10s + 转盘 + 夹取 + 读色), 留一倍余量。 */
-#define NF_COLLECT_TIMEOUT_MS   120000u
-
 /**
- * @brief 物块采集 —— 交给独立的 blockcol 任务跑, 本阶段只等它出结果。
- * @note  采集序列本身阻塞得很重 (等 IR、等总线往返), 直接写在 NLF_TASK 里会一直
- *        占着这个高优先级任务 (osPriorityHigh)。丢给 blockcol (Normal) 之后本阶段
- *        只需要轮询完成标志, 中途照样让得出去。
+ * @brief 物块/奖杯采集 —— **只把请求挂给 gripper_task, 不等结果, 立刻返回**。
+ *
+ *  采集 (等 IR / 转盘 / 夹爪 / 读色) 全程跑在 `gripper_task` 里, 与 NLF_TASK
+ *  的导航**并行**。本阶段唯一的作用就是"把这一轮请求挂上去", 挂完就落回
+ *  `Event_Navigation` 继续走点。
+ *
+ * @note V1.23.0 之前这里会**阻塞轮询 `BlockCollect_IsDone()` 最长 120 秒**
+ *       (`NF_COLLECT_TIMEOUT_MS`) —— 那正是"收集完才开导航"的病根, 已整段删除。
+ *       现在这套设计是: **导航一直在跑, 物块在途中收**。
+ * @note 流程**不再感知采集何时完成**。`BlockCollect_IsRunning()/IsDone()`
+ *       API 保留为查询式, 将来真需要等的阶段自己拿它轮询 (见 block_collect.h)。
+ * @note 采集**推进导航**的通道不在这里, 而在 `gripper_task` 侧的 IR 进料 →
+ *       `Route_AbortRequest()` → `Nav_GoToWorld()` 打断。见 worker_task.h。
  */
 static void NF_Stage_Collect(BlockCollectStage_t stage)
 {
-    printf("[FLOW] Collect: 请求采集 (%s)\r\n",
+    printf("[FLOW] Collect: 挂请求 (%s), 不等\r\n",
            (stage == COLLECT_TROPHY) ? "奖杯" : "物料");
-
+    NAV_count=0;
+    cur_stage = stage;
+    if (stage==COLLECT_TROPHY)
+    {
+        NX_RequestMode(NX_MODE_YOLO);
+    }
+    else
+    {
+        NX_RequestMode(NX_MODE_CIRCLE);
+    }
+    NX_ApplyMode();
     BlockCollect_SetStage(stage);
     BlockCollect_Reset();
-    BlockCollect_Start();
+    BlockCollect_Start();            /* 只置请求; gripper_task 下一拍开始跑 */
 
-    uint32_t t0 = HAL_GetTick();
-    while (!BlockCollect_IsDone()) {
-        if ((HAL_GetTick() - t0) > NF_COLLECT_TIMEOUT_MS) {
-            printf("[FLOW] Collect 超时, 强行推进\r\n");
-            break;
-        }
-        osDelay(20);
-    }
-
-    printf("[FLOW] Collect: 完成\r\n");
-    NLF_Request(Event_Collect_R);
+    NLF_Request(Event_Navigation);   /* 立刻进导航, 采集并行 */
 }
 
-/**
- * @brief 找圆 → 对准 → 放一个物块。
- * @note  与旧代码的两处关键差异, 都是必须的:
- *        1. **Circle_Follow() 是单拍函数** —— 它不阻塞、不自循环、无退出条件
- *           (algorithm/Circle_base.c:36-116), 跑一次只发 10ms 的一拍电机指令。
- *           旧代码把它放在按拍的轮询状态机里所以能跑; 这里改成显式 while 循环。
- *        2. **加了超时** —— 见 NF_CIRCLE_TIMEOUT_MS 的说明。
- */
+
 static void NF_Stage_FindCircle(void)
 {
     uint32_t t0;
@@ -362,8 +447,6 @@ static void NF_Stage_FindCircle(void)
         osDelay(10);
     }
 
-    /* 转盘依次转到每个颜色所在槽位, 转完放料。
-     * TT_RotateByQR() 每次只转一格 (内部 osDelay(500)), 要循环到它返回 false。 */
     while (TT_RotateByQR()) {
         /* 每次调用推进一格 */
     }
@@ -372,7 +455,7 @@ static void NF_Stage_FindCircle(void)
 
     g_circle_dir = ' ';         /* 清残留, 让下一次找圆重新判定 */
     TT_RotateReset();
-    Wheel_Odom_Reset();         /* 旧代码的 World_Reset(): 放置完清零里程计 */
+    Wheel_Odom_Reset();
 
     NLF_Request(Event_Navigation);
 }
@@ -383,24 +466,15 @@ static void NF_Stage_PlaceDown(void)
     Jang_type rank = NF_RANK[s_place_idx % NF_RANK_COUNT];
     uint32_t  t0;
 
-    /* 名次 → 槽位要**反查** g_tt.trophy[], 不能用那张旧的 NF_TROPHY_SLOT[]。
-     * 后者是旧 QR 方案的固定映射 (冠军→槽3), 而奖杯现在落在哪个槽由
-     * **收集顺序**决定 (第 N 个进槽 N), 名次是收完才填进 g_tt.trophy[] 的 ——
-     * 两者对不上, 照抄那张表会拿错奖杯。详见 V1.21.1 记录。 */
     const uint8_t slot_idx = SlotByTrophy((uint8_t)rank);   /* g_tt 下标 0~2 / SLOT_NONE */
-    const uint8_t tslot    = (slot_idx == SLOT_NONE) ? 0u
-                                                     : (uint8_t)(slot_idx + 1u);  /* 转盘槽 1~3 */
+    const uint8_t tslot    = (slot_idx == SLOT_NONE) ? 0u: (uint8_t)(slot_idx + 1u);  /* 转盘槽 1~3 */
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
     g_circle_speed = 1.0f;
 
-    /* 1) 转盘转到该奖杯所在工位 —— 每个奖杯只在第一次进入本阶段时转一次。
-     *    季军分支在旧代码里还附带一个先下降的预动作。 */
     if (!s_place_latch) {
         if (slot_idx == SLOT_NONE) {
-            /* 采集阶段没把名次填进来 (或填了别的值)。不猜, 记一条日志跳过本拍,
-             * 否则会转到某个不相干的槽去放。 */
             printf("[FLOW] PlaceDown rank=%d 在 g_tt.trophy[] 里找不到, 跳过\r\n",
                    (int)rank);
             s_place_idx++;
@@ -410,13 +484,12 @@ static void NF_Stage_PlaceDown(void)
         }
 
         if (rank == third_place) {
-            BlockBasic_LiftTo(DOWN, 14u);
+            BlockBasic_LiftTo(DOWN, 33u);
         }
         BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
     }
 
-    /* 2) 找圆对准 (同 NF_Stage_FindCircle, Circle_Follow 需外层循环) */
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
         Circle_Follow();
@@ -434,7 +507,7 @@ static void NF_Stage_PlaceDown(void)
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
-        BlockBasic_LiftTo(UP, 48u);   /* 亚军: 放完先把丝杆升起 */
+        BlockBasic_LiftTo(UP, 20u);   /* 亚军: 放完先把丝杆升起 */
     }
 
     s_place_idx++;
@@ -443,11 +516,33 @@ static void NF_Stage_PlaceDown(void)
 
     NLF_Request(Event_Navigation);
 }
+static void NF_Start(void)
+{
+    SystemMode_t mode = Event_Navigation;      /* 初值只是兜底, 见下 */
 
-/** 回家: 走既有路径点表, 然后停车。 */
+    if (!NF_DispatchNext(&mode)) {
+        /* 表已跑完: NF_DispatchNext() 返回 false 且**不写 out**,
+         * 原来这里会把未初始化的栈值当阶段号发出去 → 随机跳一个阶段。
+         * 见 clauderecord 2026-10-04 的备注。 */
+        printf("[FLOW] 表已跑完, 忽略启动键\r\n");
+        return;
+    }
+    NLF_Request(mode);
+}
+/** 回家: 只走到 g_waypoints[] 的最后一行 (表里标的"17 回家点"), 然后停车。
+ *  @note  V1.24.2 之前这里调 `Nav_RunWaypoints()`, 那是**从 0 号点开始把整张
+ *         表再走一遍**(17 个点) —— 加上流程自己的十几段导航, 表现就是"连着
+ *         跑两遍"。回家就该只走回家点, 不是再巡一圈。 */
 static void NF_Stage_GoHome(void)
 {
-    Nav_RunWaypoints();         /* g_waypoint_count 当前恒 0 → 立即返回 */
+    /* 先清掉可能残留的打断请求 —— 它是**电平不是队列**, 采集跑完时若还挂着,
+     * 会让这一段第一拍就被打断、直接跳过。见 worker_task.h 的 g_route_abort。 */
+    g_route_abort = 0u;
+
+    if (g_waypoint_count > 0u) {
+        const World_Dir_t *home = &g_waypoints[g_waypoint_count - 1u];
+        (void)Nav_GoToWorld(home->x, home->y, home->yaw);
+    }
     AG_Stop();
 }
 
@@ -467,7 +562,7 @@ void NLF_RunFlow(SystemMode_t mode)
 
         case Event_Collect_L:
             /* 物块采集: 圆锥 + 槽 2~5 夹取 + 读形状/颜色, 结果写进 g_tt */
-            NF_Stage_Collect(COLLECT_MATERIAL);
+            NF_Stage_Collect(COLLECT_BLOCK);
             break;
 
         case Event_Collect_R:
@@ -492,7 +587,9 @@ void NLF_RunFlow(SystemMode_t mode)
             Arc_Run();
             break;
 
-
+        case Event_START:
+            NF_Start();
+            break;
 
         case Event_STOP:
             /* 急停 */
@@ -500,11 +597,7 @@ void NLF_RunFlow(SystemMode_t mode)
             AG_Stop();
             break;
 
-        /* Event_QRCode / Event_PickUp / Event_STEERING_ROTATE 暂不接线:
-         *   Event_QRCode          —— 按用户决定 (2026-09-28) 不再扫二维码,
-         *                            NX 回传顺序后本事件应彻底废弃;
-         *   Event_PickUp          —— 收集已在循迹段完成, 无独立动作;
-         *   Event_STEERING_ROTATE —— 转盘动作已内联进 FindCircle / PlaceDown。 */
+
         default:
             printf("[FLOW] unhandled mode %d\r\n", (int)mode);
             break;

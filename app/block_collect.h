@@ -53,7 +53,7 @@
 
 /** 本次采集跑哪条分支。。 */
 typedef enum {
-    COLLECT_MATERIAL = 0,
+    COLLECT_BLOCK = 0,
     COLLECT_TROPHY   = 1,
 } BlockCollectStage_t;
 

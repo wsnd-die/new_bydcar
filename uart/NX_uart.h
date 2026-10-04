@@ -17,6 +17,7 @@ extern DMA_HandleTypeDef hdma_uart4_rx;
 // #define K230_MODE_LINEL      'l'   /* 循迹模式 */
 // #define K230_MODE_LINER      'r'
 #define NX_MODE_CIRCLE    'c'   /* 绕圈模式 */
+#define NX_MODE_YOLO      'y'
 #define NX_MODE_STOP      'x'   /* 停止（匹配 K230 Python） */
 
 /* ==================== 模式管理 ==================== */

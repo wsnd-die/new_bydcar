@@ -82,6 +82,31 @@ extern osThreadId_t nlfTaskHandle;
 extern volatile uint8_t g_angle_ctrl_enable;
 extern volatile float   g_angle_target_yaw;
 
+/* ---- V1.23.0 追加: 路线段打断 (跨任务) ------------------------------
+ *
+ *  置位方: `gripper_task` —— `app/block_collect.c` 的 `wait_block_entered()`
+ *          在 IR 检测到物块进料时调 `Route_AbortRequest()`。
+ *  消费方: 正在跑路线的那个函数 —— `Nav_GoToWorld()` / `Arc_Run()` 在自己的
+ *          轮询循环里读到就 **停车、清零、提前收尾**。
+ *
+ *  语义: **"别走当前这一段了, 立刻切下一段"**。用户要的是"物块一进料口就
+ *  改奔下一个点", 不是"走完这段再说"。
+ *
+ *  @note 这是**电平不是队列** —— 没人消费时它会一直留着, 于是下一段路线
+ *        第一拍就命中, 白跳一格。所以每个"没有路线在跑"的入口
+ *        (如 `NF_Stage_GoHome()`) 都要先把它清掉。
+ *  @note 单核 Cortex-M4 上单字节 volatile 的读/写是单条指令, 天然原子,
+ *        **不需要临界区**。读的一方 (NLF_TASK) 优先级更高, 写的一方
+ *        (gripper_task) 只写不读。
+ *  @note **刻意不用 `NLF_Request()` / 线程标志**: 打断发生时 NLF_TASK 正阻塞在
+ *        `Nav_GoToWorld()` 的 `osDelay()` 里, 根本不在 `osThreadFlagsWait` 上,
+ *        线程标志对它毫无作用; 而且会把 `NLF_FLAG_RUN` 留成置位, 等当前流程
+ *        返回后**多跑一次 `NLF_RunFlow`**。 */
+extern volatile uint8_t g_route_abort;
+
+/** @brief 请求打断当前路线段 (下一段立刻开始)。见 `g_route_abort`。 */
+void Route_AbortRequest(void);
+
 /* ---- V1.13.0 追加: 圆弧/平移量 ------------------------------------
  * @note **默认全 0**, 因此不设置它们时 FC_TASK 的行为与 V1.12.0 完全一致
  *       (纯原地转向, 线速度为 0)。这是向后兼容的扩展, 不动上面两条。

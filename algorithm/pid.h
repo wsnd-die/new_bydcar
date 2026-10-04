@@ -29,8 +29,9 @@ typedef struct {
     fp32 Pout, Iout, Dout, out;
 } pid_type_def;
 
+
 void PID_init (pid_type_def *pid, uint8_t mode, const fp32 PID[3], fp32 max_out, fp32 max_iout);
 fp32 PID_calc (pid_type_def *pid, fp32 ref, fp32 set);
 void PID_clear(pid_type_def *pid);
-
+float PID_Filter(fp32 alpha,fp32 data);
 #endif

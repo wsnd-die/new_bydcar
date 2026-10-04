@@ -154,7 +154,87 @@ uint32_t malu_cm_topluse_s(float cm)
 }
 
 /* ================================================================
- *  编码器读取 (通过 CAN → Emm_V5 电机)
+ *  位置模式定距移动 —— 按车体位移算四个轮子的脉冲数, 直接发下去
+ *
+ *  与 Mecanum_Calc_Full_V 同一套逆解, 只是把"速度"换成"位移"
+ *  (两者是线性的, 系数相同), 再把每个轮子的行程换算成 Emm_V5 位置模式的
+ *  脉冲数。开环: 发完就等, 不读编码器。
+ *
+ *  极性映射逐字节镜像 hardware/actuators/Send_motor.c 的 Send_commandmotor():
+ *      地址 1 = 前右, 方向位取反
+ *      地址 2 = 后左, 方向位原样
+ *      地址 3 = 前左, 方向位取反
+ *      地址 4 = 后右, 方向位原样
+ *  两处必须保持一致, 改任何一边都要同步另一边。
+ * ================================================================ */
+
+/** 发一个轮子的定距位置指令。dist_m 带符号, >0 = 该轮的"正转"方向。 */
+static void Mecanum_MoveOneWheel(uint8_t addr, float dist_m, uint16_t vel_rpm)
+{
+    if (fabsf(dist_m) < MEC_POS_MIN_M) {
+        return;                     /* 太短, 不值得发, 也免得脉冲数算成 0 */
+    }
+
+    /* malu_cm_topluse_s() 收 cm 且返回**无符号** —— 符号在这里自己处理 */
+    uint32_t clk = malu_cm_topluse_s(fabsf(dist_m) * 100.0f);
+    if (clk == 0u) {
+        return;
+    }
+
+    uint8_t dir;
+    if (addr == 1u || addr == 3u) {
+        dir = (dist_m > 0.0f) ? 0u : 1u;   /* 前右 / 前左: 取反 */
+    } else {
+        dir = (dist_m > 0.0f) ? 1u : 0u;   /* 后左 / 后右: 原样 */
+    }
+
+    /* raF = 0 → 相对运动 (走这么多脉冲就停); snF = 0 → 立即执行, 不等同步广播。
+     * 四条 CAN 帧前后脚发出去, 间隔亚毫秒级, 定距平移够用。 */
+    Emm_V5_Pos_Control(addr, dir, vel_rpm, MEC_POS_ACC, clk, 0, 0);
+}
+
+/** 四个轮子都报到位了吗 (每个轮子一次 CAN 往返, 内部超时 50ms)。 */
+static bool Mecanum_AllReached(void)
+{
+    /* 顺序不重要: 用 && 短路, 第一个没到就不再问后面三个, 省总线 */
+    return Emm_V5_Is_Reached(1u) && Emm_V5_Is_Reached(2u) &&
+           Emm_V5_Is_Reached(3u) && Emm_V5_Is_Reached(4u);
+}
+
+bool Mecanum_MoveBodyPos(float fwd_m, float left_m, uint16_t timeout_ms)
+{
+    /* 麦轮逆解只取平移两项 (w = 0)。与 Mecanum_Calc_Full_V 同式。 */
+    const float fl = fwd_m - left_m;
+    const float fr = fwd_m + left_m;
+    const float rl = fwd_m + left_m;
+    const float rr = fwd_m - left_m;
+
+    Mecanum_MoveOneWheel(1u, fr, MEC_POS_VEL_RPM);   /* 前右 */
+    Mecanum_MoveOneWheel(2u, rl, MEC_POS_VEL_RPM);   /* 后左 */
+    Mecanum_MoveOneWheel(3u, fl, MEC_POS_VEL_RPM);   /* 前左 */
+    Mecanum_MoveOneWheel(4u, rr, MEC_POS_VEL_RPM);   /* 后右 */
+
+    if (timeout_ms == 0u) {
+        return true;            /* 调用方说不用等 */
+    }
+
+
+    osDelay(MEC_POS_START_DELAY_MS);
+
+    uint32_t t0 = HAL_GetTick();
+    for (;;) {
+        if (Mecanum_AllReached()) {
+            return true;                        /* 四个都到位 */
+        }
+        if ((HAL_GetTick() - t0) >= timeout_ms) {
+            return false;
+        }
+        osDelay(5);
+    }
+}
+
+/* ================================================================
+ *  编码器读取
  * ================================================================ */
 
 extern volatile uint8_t  can_rx_flag;
@@ -178,8 +258,6 @@ uint8_t Mecanum_Read_Speed(uint8_t id, int16_t *rpm, uint32_t timeout_ms)
             can_rx_flag = 0;
             uint8_t rx_id = (uint8_t)(can_rx_header.Identifier >> 8);
 
-            /* 与位置读取同规律: [命令0x35][0x01][转速int16大端][校验0x6B]
-             * rpm = data[2..3], 校验 = data[4] */
             if (can_rx_header.IdType == FDCAN_EXTENDED_ID &&
                 rx_id == id &&
                 can_rx_data[0] == 0x35 &&

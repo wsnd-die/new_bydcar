@@ -28,7 +28,7 @@ extern "C" {
 
 /* 丝杆每上升 1mm 需要的 EMM 位置模式脉冲数。 */
 #define BLOCK_STEPPER_PULSE_PER_MM       1600.0f
-#define BLOCK_LIFT_MAX_MM                70.0f   /* 丝杆最大行程 (mm) */
+#define BLOCK_LIFT_MAX_MM                100.0f   /* 丝杆最大行程 (mm) */
 
 
 #define BLOCK_SERVO_DEG              360.0f
@@ -57,7 +57,7 @@ extern "C" {
 /* 转盘位置编号从 1 开始，合法范围为 1~5。 */
 #define BLOCK_TURNTABLE_FIRST_POS        1u
 #define BLOCK_TURNTABLE_POS_COUNT        5u
-#define BLOCK_TURNTABLE_HOME_DEG         14.0f
+#define BLOCK_TURNTABLE_HOME_DEG         10.0f
 #define BLOCK_TURNTABLE_STEP_DEG         (BLOCK_SERVO_DEG / BLOCK_TURNTABLE_POS_COUNT)
 /**
  * 关门角度, 单位 deg。第 5 槽之后再往前多转一点把门带上, 用 Servo_Angle() 下发。
