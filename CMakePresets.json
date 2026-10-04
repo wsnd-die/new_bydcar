@@ -7,7 +7,12 @@
       "hidden": true,
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
-      "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake"
+      "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+      "cacheVariables": {
+        "ARM_TOOLCHAIN_PATH": "D:/DevEnv/GNU-tools-for-STM32/bin",
+        "CMAKE_TRY_COMPILE_PLATFORM_VARIABLES": "ARM_TOOLCHAIN_PATH",
+        "CMAKE_MAKE_PROGRAM": "D:/CLion 2026.2.3.1/bin/ninja/win/x64/ninja.exe"
+      }
     },
     {
       "name": "Debug",

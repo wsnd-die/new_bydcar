@@ -52,7 +52,7 @@ extern World_Dir_t Self_Dir;
 #define NAV_VMAX_X            2.0f    /* x平移速度限幅 m/s */
 #define NAV_VMAX_Y            2.0f    /* y平移速度限幅 m/s */
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
-#define NAV_ACC_XY             2.5f    /* 平移加速度 m/s² (软启动) */
+#define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
 #define NAV_TOL_XY             0.02f   /* 到达容差 3cm */
 #define NAV_TOL_YAW            0.05f   /* 到达容差 ~2.9° */
@@ -60,28 +60,13 @@ extern World_Dir_t Self_Dir;
 #define NAV_ARRIVE_TICKS       5u      /* 连续 5 拍判到达 (抗单帧抖动) */
 #define NAV_MAX_INVALID_TICKS  20u     /* OPS9 离线容忍 0.3s, 超限零速保持 */
 
-/* ============================================================
- * 平移轴速度规划 —— V1.24.1
- *
- *      v_ref = clamp(Kp·e, ±√(2·a·|e|), ±V_max)
- *
- * 近场线性 P: 和原来的纯 P 一样温和、过零连续, 不会在点位上抖。
- * 远场制动曲线做**上限**: |v| ≤ √(2·a·|e|) 即"此刻还刹得住", 补上纯 P 缺的
- * 减速约束, 使提速与不过冲不再矛盾。
- *
- * @warning 曲线**只能当上限, 不能当参考** (V1.24.0 的错就在这): 当参考时它在
- *          e→0 处等效增益发散, 且死区边界是 "0 → √(2·a·deadband)" 的阶跃,
- *          位置噪声一到就变成**到点来回晃**, 比纯 P 还差。
- *
- * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
- * ============================================================ */
 #ifndef NAV_XY_PROFILE
 #define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
 #endif
-#define NAV_KP_X_LIN    3.3f
-#define NAV_KP_Y_LIN    0.0f
-#define NAV_BRK_X       0.75f
-#define NAV_BRK_Y       0.0f
+#define NAV_KP_X_LIN    5.9f
+#define NAV_KP_Y_LIN    5.9f
+#define NAV_BRK_X       0.94f
+#define NAV_BRK_Y       0.94f
 #define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 
