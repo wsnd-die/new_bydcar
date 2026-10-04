@@ -86,7 +86,12 @@ static bool wait_block_entered(uint32_t timeout_ms, uint8_t *rank_out)
 
     if (rank_out) {
         *rank_out = 0u;
-        (void)NX_GetTrophyRank(&r);           /* 丢掉上一轮的残留帧 */
+        /* 丢掉上一轮的残留帧。⚠ 原来这里是**静默**吞帧的 —— 上一槽夹紧/转盘
+         * 那 400~600ms 空档里收到的帧会攒在这里被吃掉, 完全看不出来。
+         * 现在真丢了就打一行, 用来确认"槽2 恒 0 票"是不是这么丢的。 */
+        if (NX_GetTrophyRank(&r)) {
+            printf("[COLLECT] (开窗丢残留帧 '%c')\r\n", r);
+        }
     }
 
     for (;;) {
@@ -191,9 +196,8 @@ static void collect_slots(void)
                 printf("[COLLECT] slot %u: no block, skip\r\n", (unsigned)slot);
                 continue;
             }
-
-            (void)BlockBasic_GripperClamp(slot);
             osDelay(COLLECT_SETTLE_MS);
+            (void)BlockBasic_GripperClamp(slot);
             identify_slot(slot);
             if (slot < BLOCK_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
@@ -218,22 +222,23 @@ static void collect_slots(void)
 
             if (rank != 0u) {
                 TT_SetTrophy((uint8_t)(slot - 1u), rank);
-                printf("[COLLECT] trophy slot=%u rank=%u\r\n",
-                       (unsigned)slot, (unsigned)rank);
+                printf("[COLLECT] trophy slot=%u rank=%u  (B3总帧=%u)\r\n",
+                       (unsigned)slot, (unsigned)rank,
+                       (unsigned)NX_GetTrophyCount());
             } else {
-                printf("[COLLECT] trophy slot=%u: 一票都没有, 该槽名次未定\r\n",
-                       (unsigned)slot);
+                printf("[COLLECT] trophy slot=%u: 一票都没有, 该槽名次未定  (B3总帧=%u)\r\n",
+                       (unsigned)slot, (unsigned)NX_GetTrophyCount());
             }
 
-            (void)BlockBasic_GripperClamp(slot);
 
             if (slot < TROPHY_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
                 Servo_Angle(TROPHY_CLOSE_DOOR);
             }
+            (void)BlockBasic_GripperClamp(slot);
         }
-        BlockBasic_LiftTo(UP, 25);
+        BlockBasic_LiftToAbs(28.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
     }
 }
 

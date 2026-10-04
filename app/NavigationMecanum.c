@@ -50,6 +50,12 @@ uint8_t g_waypoint_count = 17u;
  * ================================================================== */
 static bool s_nav_aborted = false;
 
+/** 1 = 当前正有一段路线被 Nav_GoToWorld 驱动。
+ *  `Route_AbortRequest()`(worker_task.c) 用它判断"这次进料有没有段可打断":
+ *  没有段在跑就直接丢掉 —— 否则迟到的进料会把**下一段**打成"被打断",
+ *  而游标照常 s_idx++ → 平白吃掉一个点位。 */
+volatile uint8_t g_nav_running = 0u;
+
 /** 上一次 Nav_FeDuanPoint() **走完**的点号 (1 基); 0 = 没走到 / 路线已走完。
  *  给 worker_task.c 的"到位后向前蹭料"判断点位用 (见 NF_CREEP_WP[])。 */
 static uint8_t s_last_wp = 0u;
@@ -178,19 +184,17 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     uint8_t  arrive  = 0u;   /* 连续到达 tick 数 */
     uint8_t  invalid = 0u;   /* 反馈连续无效 tick 数 */
 
-    /* ── 调参仪表 (只在出循环时打一行, 不占循环时间) ──
-     * ovs_x / ovs_y: 本段**过冲量** (m), 0 = 没冲过目标点 —— 这是调
-     *   NAV_BRK_XY / NAV_KP_XY_LIN 时要盯的唯一的客观量。
-     *   算法: 记第一拍误差的符号 s0, 之后每拍算 -s0·e 取最大。误差从不反号
-     *   时该值恒负(不过冲); 一旦冲过目标点就变正, 数值就是冲出去多远。
-     * last_*: 超时分支看不到作用域里的 ex/ey/eyaw (它们在循环内层声明),
-     *   所以每拍存一份, 让超时那行也能打出"差了多少"。 */
+
     uint8_t s0_set = 0u;
     float   s0x = 0.0f, s0y = 0.0f;
     float   ovs_x = 0.0f, ovs_y = 0.0f;
     float   last_ex = 0.0f, last_ey = 0.0f, last_eyaw = 0.0f;
 
     PoseData_t pose;
+
+    /* 从这一拍起本段才算"在跑"。此前(含上面那 20ms 让路)到达的打断与本节无关,
+     * 由 Route_AbortRequest() 直接丢弃 —— 见该函数的说明。 */
+    g_nav_running = 1u;
 
     for (;;)
     {
@@ -207,6 +211,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
                 Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
             }
             s_nav_aborted = true;
+            g_nav_running = 0u;
             return false;
         }
 
@@ -265,9 +270,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
             Send_commandmotor(&res);
 
-            /* 到达: 三轴误差均入容差 **且指令速度已收下来**, 连续 NAV_ARRIVE_TICKS 拍。
-             * 速度门限是必要的: 曲线规划会带着 ~0.3 m/s 穿过容差区, 只看位置就会在
-             * 还在跑的时候判"到了", 之后的滑行把车带出容差。 */
+
             if (fabsf(ex) <= NAV_TOL_XY && fabsf(ey) <= NAV_TOL_XY &&
                 fabsf(eyaw) <= NAV_TOL_YAW &&
                 fabsf(vx_cmd) <= NAV_ARRIVE_VMAX && fabsf(vy_cmd) <= NAV_ARRIVE_VMAX)
@@ -297,6 +300,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             {
                 Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
             }
+            g_nav_running = 0u;
             return false;
         }
 
@@ -306,6 +310,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     /* 到达: 零速停车 + 刷新 Self_Dir */
     NAV_Stop();
     Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
+    g_nav_running = 0u;
     return true;
 }
 

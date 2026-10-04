@@ -104,7 +104,14 @@ extern volatile float   g_angle_target_yaw;
  *        返回后**多跑一次 `NLF_RunFlow`**。 */
 extern volatile uint8_t g_route_abort;
 
-/** @brief 请求打断当前路线段 (下一段立刻开始)。见 `g_route_abort`。 */
+/** @brief 请求打断当前路线段 (下一段立刻开始)。见 `g_route_abort`。
+ *
+ *  @note **当前默认是空实现**(`NF_ABORT_ON_FEED = 0`, 见 worker_task.c):
+ *        在"分点导航 + 到位蹭料"模式下, 物块是**车到位之后**才被 creep 顶进
+ *        进料口的 —— 那时没有段可以打断; 而进料事件上报得晚 50~150ms(采集侧的
+ *        IR 判据内部有去抖), 迟到的打断会打到**下一段**头上, 让它刚起步就被
+ *        打断而游标照常推进 → **平白跳一个点位**。
+ *        (剪掉 creep、改回"边开边收"时, 把那个宏改回 1 即可恢复本机制。) */
 void Route_AbortRequest(void);
 
 /* ---- V1.13.0 追加: 圆弧/平移量 ------------------------------------

@@ -322,14 +322,15 @@ void gripper_task(void *argument)
     for (;;) { osDelay(100); }
   }
   while (!BPlace_SetZero());
+  BlockBasic_LiftSync(0.0f);      /* 压限位归零 → 软件高度同步成 0 (之后用绝对高度指令) */
   printf("[scs] init SUCSESS: huart5 initialized\r\n");
   BlockBasic_TurntableTo(1);
-  Servo_SetAngle(39);
+  Servo_SetAngle(127);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
   }
   // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
-  BlockBasic_LiftTo(UP,3);
+  BlockBasic_LiftToAbs(3.0f);     /* 夹爪初始化抬到 3mm (等价原 UP,3) */
   printf("[scs] gripper init done\r\n");
   for (;;)
   {
@@ -424,6 +425,9 @@ void KEY_TASK(void *argument)
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
       NLF_Request(Event_START);
+      Servo_SetAngle(70);
+      osDelay(500);
+      Servo_SetAngle(40);
     }
 
     osDelay(10);

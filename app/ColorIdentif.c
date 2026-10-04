@@ -202,6 +202,10 @@ uint8_t SlotByTrophy(uint8_t rank)
 /* ============================================================
  * TT_RotateByQR — 按 QR 颜色顺序, 旋转到每个颜色所在物理槽位
  * ============================================================ */
+/** `TT_RotateByQR()` 最近转到门口的**物理槽号** (1~5); 0 = 还没转过。
+ *  给 `Place()` 松夹爪用 (物料摆放逐个放, 必须知道当前是哪个槽在门口)。 */
+static uint8_t g_tt_last_slot = 0u;
+
 bool TT_RotateByQR(void)
 {
     uint8_t cnt = (g_tt.ok && g_tt.idx < 16) ? g_tt.cnt : 5;
@@ -223,8 +227,14 @@ bool TT_RotateByQR(void)
 
     g_tt_rotate_idx++;
     BlockBasic_TurntableTo(slot + 1);
+    g_tt_last_slot = (uint8_t)(slot + 1u);   /* 记为"当前在门口"的物理槽号 (1~5) */
     osDelay(500);
     return true;
+}
+
+uint8_t TT_CurrentSlot(void)
+{
+    return g_tt_last_slot;
 }
 
 void TT_RotateReset(void)

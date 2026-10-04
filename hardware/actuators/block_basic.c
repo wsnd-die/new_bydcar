@@ -176,11 +176,72 @@ BlockShape_t BlockBasic_ShapeFromRaw(int raw_angle, uint8_t slot)
            ? SHAPE_RECT : SHAPE_CYLINDER;
 }
 
+/* ================================================================
+ * 丝杆升降
+ *
+ * `lift_current` = **软件记录的丝杆绝对高度** (mm)。绝对版与旧的相对版
+ * **共用这一份** —— 两个 API 混用时高度才不会互相错位。
+ * 上电/归零后必须与机械实际位置一致: BPlace_SetZero() 压到限位归零之后
+ * 调 BlockBasic_LiftSync(0.0f)。
+ * ================================================================ */
+static float lift_current = 0.0f;
+
+void BlockBasic_LiftSync(float cur_mm)
+{
+    lift_current = CLAMP_FLOAT(cur_mm, 0.0f, BLOCK_LIFT_MAX_MM);
+}
+
+/**
+ * @brief   丝杆升降 —— **绝对位置**(指定点位)指令。
+ * @param   target_mm  目标高度, 单位 mm, 有效范围 [0, BLOCK_LIFT_MAX_MM]。
+ * @retval  true   已下发 (方向与脉冲由内部按当前位置算)
+ * @retval  false  越界未执行 / 双机械臂车型不支持
+ *
+ * @note    调用方只管说"升到多少 mm", 不必记当前高度、也不用心算相对量。
+ *          旧的相对版 `BlockBasic_LiftTo(dir, delta)` 是**顺序相关**的 ——
+ *          中间某一拍被跳过(例如 PlaceDown 走了"找不到名次, 跳过"分支),
+ *          后面所有高度就整体错位; 新代码请用本函数。
+ * @note    已经停在该高度上时直接返回 true, 不发 CAN。
+ */
+bool BlockBasic_LiftToAbs(float target_mm)
+{
+#if BLOCK_USE_DUAL_ARM
+    (void)target_mm;
+    return false;                   /* 双机械臂型按预设位置表动作, 没有"绝对高度" */
+#else
+    float    delta;
+    uint32_t pulse;
+
+    if (target_mm < 0.0f || target_mm > BLOCK_LIFT_MAX_MM) {
+        return false;               /* 越界: 不动, 让调用方知道 */
+    }
+
+    delta = target_mm - lift_current;
+    if (delta == 0.0f) {
+        return true;                /* 已经在那儿了 */
+    }
+
+    lift_current = target_mm;
+
+    pulse = (uint32_t)(((delta > 0.0f) ? delta : -delta) *
+                       BLOCK_STEPPER_PULSE_PER_MM);
+
+    /* 方向编码沿用旧 API: 上行 = 0, 下行 = 1 (见下面 BlockBasic_LiftTo 的实际行为,
+     * 注意它上面的注释里"0=下降"是**写反了**的 —— 枚举里 UP = 0) */
+    Emm_V5_Pos_Control(5, (delta > 0.0f) ? 0u : 1u, 1600, 0, pulse, 0, 0);
+    return true;
+#endif
+}
+
 /**
  * @brief   根据编译期选定的车型执行对应升降机构，并统一返回转盘后退距离。
- * @param   dir         升降方向，0=下降，1=上升。
- * @param   pos         双机械臂型为位置表编号；丝杆型为目标升高高度，单位 mm。
+ * @param   dir         升降方向: **0 = UP(上升), 1 = DOWN(下降)**。
+ * @param   pos         双机械臂型为位置表编号；丝杆型为相对移动量，单位 mm。
  * @return  float       >=0 为转盘相对后退距离，<0 表示参数错误或运动失败。
+ *
+ * @note    **相对量, 顺序相关** —— 见上面 LiftToAbs 的说明。新代码用绝对版。
+ * @warning 超量程时**静默返回 0 且不动作**(调用方无从区分), 需要知道成败请用
+ *          `BlockBasic_LiftToAbs()`, 它返回 bool。
  */
 float BlockBasic_LiftTo(uint8_t dir, float pos)
 {
@@ -197,7 +258,6 @@ float BlockBasic_LiftTo(uint8_t dir, float pos)
     return 0.0f;
 #else
     {
-        static float lift_current = 0.0f;  /* 已累计的绝对位置 (mm) */
         float next;
 
         if (dir == UP)
@@ -213,11 +273,11 @@ float BlockBasic_LiftTo(uint8_t dir, float pos)
         uint32_t pulse = (uint32_t)(pos * BLOCK_STEPPER_PULSE_PER_MM);
         if (dir == 0)
         {
-            Emm_V5_Pos_Control(5, 0, 1000, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 0, 1600, 0, pulse, 0, 0);
         }
         else
         {
-            Emm_V5_Pos_Control(5, 1, 1000, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 1, 1600, 0, pulse, 0, 0);
         }
         return 0.0f;
     }
@@ -330,7 +390,7 @@ void Servo_Angle(float angle_deg)
 
 void Servo_SetAngle(float Angle)
 {
-    if(Angle>=125){Angle=125;}
+    if(Angle>=130){Angle=130;}
     if(Angle<=37){Angle=37;}
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, Angle / 180 * 2000 + 500);
 
@@ -342,27 +402,27 @@ void Servo_SetAngle(float Angle)
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
 #define PLACE_MOVE_TIMEOUT_MS   1500u
 
-void Place(char dir,float x,float y,uint16_t height)
+void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
 {
     if (dir == 'O')
     {
 
-        float fwd  = 0.058f - y * PLACE_CIRCLE_SCALE_M;
+        float fwd  = 0.068f - y * PLACE_CIRCLE_SCALE_M;
         float left = -x * PLACE_CIRCLE_SCALE_M;
 
-        /* 位置模式定距走 + **等电机到位反馈** (Emm_V5_Is_Reached 查 0x3A 的 bit1)。
-         * 四个轮子都报到位就提前返回; 只有卡住/掉线才等满 PLACE_MOVE_TIMEOUT_MS。 */
+        BlockBasic_GripperRelease(slot);
         if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
             printf("[PLACE] 前移没等齐到位 (超时)\r\n");
         }
         if (height!=0)
         {
             BlockBasic_LiftTo(DOWN, height);
-            osDelay(900);
+            osDelay(600);
         }
+   /* 松开正在放的这个槽 = 解锁 */
 
         /* 后退 0.05 m (车体 -X 方向) */
-        if (!Mecanum_MoveBodyPos(-0.05f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
+        if (!Mecanum_MoveBodyPos(-0.12f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
             printf("[PLACE] 后退没等齐到位 (超时)\r\n");
         }
     }

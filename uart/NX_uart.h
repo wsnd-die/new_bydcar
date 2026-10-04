@@ -29,6 +29,8 @@ void NX_SetMode(uint8_t mode);
 /* ==================== 数据读取 ==================== */
 // bool NX_GetLineAngle(float *angle);   /* 实现已注释，暂不提供 */
 bool NX_GetTrophyRank(char *rank);
+/** @brief B3(名次)帧累计收到多少帧 (只增不减)。排查"窗口外丢帧"用, 见 .c 里的说明。 */
+uint32_t NX_GetTrophyCount(void);
 bool NX_GetCircleDir(char *dir);
 bool NX_GetPosition(float *x, float *y);
 bool NX_GetCirclepos(float *cx,float *cy);

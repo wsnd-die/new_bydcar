@@ -81,26 +81,26 @@ void Circle_Follow(void)
 
     case 'N':
         /* 圆心偏上: 前进 */
-        g_circle_vx = -g_circle_speed;
+        g_circle_vx = g_circle_speed;
         g_circle_vy = 0.0f;
         break;
 
     case 'S':
         /* 圆心偏下: 后退 */
-        g_circle_vx = g_circle_speed;
+        g_circle_vx = -g_circle_speed;
         g_circle_vy = 0.0f;
         break;
 
     case 'W':
         /* 圆心偏右: 右移 */
         g_circle_vx = 0.0f;
-        g_circle_vy = -g_circle_speed;
+        g_circle_vy = g_circle_speed;
         break;
 
     case 'E':
         /* 圆心偏左: 左移 */
         g_circle_vx = 0.0f;
-        g_circle_vy = g_circle_speed;
+        g_circle_vy = -g_circle_speed;
         break;
 
     default:

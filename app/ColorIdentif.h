@@ -100,6 +100,10 @@ uint8_t TrophyAtSlot(uint8_t slot);                 /* 未采集返回 0 */
  */
 uint8_t SlotByTrophy(uint8_t rank);
 bool    TT_RotateByQR(void);                     /* 每次转一个槽位, 返回 false=已全部转完 */
+/** @brief `TT_RotateByQR()` 最近一次**转到门口**的物理槽号 (1~5); 还没转过时返回 0。
+ *  @note  给 `Place()` 松夹爪用 —— 物料摆放是**逐个**放的, 一次全松开会把
+ *         剩下几个一起掉下去, 所以必须知道"当前是哪个槽在门口"。 */
+uint8_t TT_CurrentSlot(void);
 void    TT_RotateReset(void);                    /* 重置旋转进度 */
 bool    TT_IsDone(void);                         /* 检查是否全部转完 */
 void TogetPos(uint8_t slot, float *x, float *y, float *yaw);  /* 取点位坐标 */

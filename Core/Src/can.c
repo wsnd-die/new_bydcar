@@ -106,7 +106,7 @@ uint8_t can_SendCmd(__IO uint8_t *cmd, uint8_t len)
             can_error_step = 1;
             can_error_code = HAL_FDCAN_GetError(&hfdcan2);
             can_error_count++;
-            printf("CANfail addr=0x%02X step=1 cnt=%lu\r\n", cmd[0], (unsigned long)can_error_count);
+            // printf("CANfail addr=0x%02X step=1 cnt=%lu\r\n", cmd[0], (unsigned long)can_error_count);
             return 0;
         }
 
@@ -115,7 +115,7 @@ uint8_t can_SendCmd(__IO uint8_t *cmd, uint8_t len)
             can_error_step = 2;
             can_error_code = HAL_FDCAN_GetError(&hfdcan2);
             can_error_count++;
-            printf("CANfail addr=0x%02X step=2 cnt=%lu\r\n", cmd[0], (unsigned long)can_error_count);
+            // printf("CANfail addr=0x%02X step=2 cnt=%lu\r\n", cmd[0], (unsigned long)can_error_count);
             return 0;
         }
 

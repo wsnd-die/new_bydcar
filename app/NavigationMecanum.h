@@ -27,6 +27,12 @@ typedef struct {
 /* 当前自身位姿（世界坐标系） */
 extern World_Dir_t Self_Dir;
 
+/** 1 = 当前有一段路线正被 Nav_GoToWorld 驱动（进入驱动循环置 1, 三个出口清 0）。
+ *  @note 由 worker_task.c 的 `Route_AbortRequest()` 当判据用: **没有段在跑时
+ *        进料事件不置打断标志** —— 否则迟到的进料会打在下一段头上, 使其刚起步
+ *        就被"打断", 而游标照常推进 → 平白吃掉一个点位。 */
+extern volatile uint8_t g_nav_running;
+
 /* ============================================================
  * 路径点
  * ============================================================ */
@@ -78,10 +84,10 @@ extern World_Dir_t Self_Dir;
 #ifndef NAV_XY_PROFILE
 #define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
 #endif
-#define NAV_KP_X_LIN    3.3f
-#define NAV_KP_Y_LIN    0.0f
-#define NAV_BRK_X       0.75f
-#define NAV_BRK_Y       0.0f
+#define NAV_KP_X_LIN    5.9f
+#define NAV_KP_Y_LIN    5.9f
+#define NAV_BRK_X       0.94f
+#define NAV_BRK_Y       0.94f
 #define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 

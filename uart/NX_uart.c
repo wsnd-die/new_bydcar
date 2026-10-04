@@ -55,6 +55,7 @@ static struct {
     uint32_t rx_ok;
     uint32_t rx_err;
     uint32_t rx_unk;
+    uint32_t trophy_cnt;       /* B3(名次)帧累计收到多少帧 —— 查"窗口外丢帧"用 */
 } NX_ctx;
 
 /* ================================================================ */
@@ -138,6 +139,7 @@ void NX_RxProcessByte(uint8_t b)
                 /* [A3,B3,rank,FF] — 5B=仅角度, 7B=角度+横轴位置 */
                 NX_ctx.trophy =NX_ctx.rx_buf[2];
                 NX_ctx.trophy_fresh = 1;
+                NX_ctx.trophy_cnt++;   /* 累计帧数 (只在回调里自增, 不 printf) */
 
                 // if (NX_ctx.rx_idx >= 7) {
                 //     int16_t rx = (int16_t)((NX_ctx.rx_buf[4] << 8) | NX_ctx.rx_buf[5]);
@@ -230,6 +232,20 @@ bool NX_GetTrophyRank(char *rank)
     if (rank) *rank = NX_ctx.trophy;
     NX_ctx.trophy_fresh = 0;
     return true;
+}
+
+/**
+ * @brief B3(名次)帧**累计收到多少帧** (只增不减)。
+ *
+ * @note  给现场排查用: 把它打在每槽"名次判定"那行上, 与**窗口内的票数**对比 ——
+ *        两者接近  = NX 本身就发得少(或中间那个不报);
+ *        差值很大  = 帧落在了投票窗口之外(上一槽夹完 → 本槽开窗那 400~600ms 空档,
+ *                    以及 `wait_block_entered()` 开窗那句"丢残留")。
+ * @note  自增在 UART 回调里, 本函数只读; 单字读天然原子, 不需要临界区。
+ */
+uint32_t NX_GetTrophyCount(void)
+{
+    return NX_ctx.trophy_cnt;
 }
 
 bool NX_GetCircleDir(char *dir)

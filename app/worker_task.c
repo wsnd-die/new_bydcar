@@ -31,9 +31,34 @@ volatile float   g_angle_target_yaw  = 0.0f; /* 目标航向 (deg), 与 g_hwt_im
 volatile uint8_t g_route_abort = 0u;
 volatile static uint8_t NAV_count=0;
 
+/** 物块进料时是否打断当前路线段。
+ *
+ *  0 (默认) = **不打断** —— "分点导航 + 到位蹭料"模式下唯一正确的选择:
+ *      creep 保证了"车**到位之后**物块才进料", 那时根本没有段可以打断;
+ *      而这个进料事件是从 gripper_task 上报的, 它的 `IR_ObjectEntered()` 内部有
+ *      50/100ms 去抖(osDelay), 比导航侧的检测**晚 50~150ms** 才认账 ——
+ *      迟到的打断正好落进**下一段刚起步**的窗口里, 把下一段打成"被打断"
+ *      (而游标照常 s_idx++) → **平白跳过一个点位**。
+ *      现场表现: 收完第 1 个奖杯就跳掉第 2 个点位。
+ *
+ *      关掉之后流程变成一步一点、完全确定:
+ *          驱动到点N → 到位 → creep 把物块顶进进料口 → 采集侧收到 IR → 去点 N+1
+ *
+ *  1 = 旧语义(**边开边收**): 只在 `Nav_GoToWorld()` 正在驱动一段时接受打断。
+ *      剪掉 creep、改回"一边开一边把物块扫进进料口"时才需要它。 */
+#ifndef NF_ABORT_ON_FEED
+#define NF_ABORT_ON_FEED  0
+#endif
+
 void Route_AbortRequest(void)
 {
-    g_route_abort = 1u;
+#if NF_ABORT_ON_FEED
+    /* 旧语义: 有段在跑才打断 —— 没有段可打断的进料直接丢掉 */
+    if (g_nav_running) {
+        g_route_abort = 1u;
+    }
+#endif
+    /* NF_ABORT_ON_FEED == 0: 直接丢弃, 理由见上面的宏说明。 */
 }
 
 
@@ -181,18 +206,19 @@ typedef struct {
 
 
 
-static const NF_Stage_t NF_STAGES[] = {
-    { Event_Navigation, 16u },
-};
+// static const NF_Stage_t NF_STAGES[] = {
+//     { Event_Navigation, 16u },
+// };
 #define NF_STAGE_COUNT  (sizeof(NF_STAGES) / sizeof(NF_STAGES[0]))
 
 #if 1   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
-// static const NF_Stage_t NF_STAGES[] = {
-//     { Event_Collect_R, 1u },
-//     { Event_PlaceDown, 3u },
-//     { Event_Collect_L,    1u },
-//     { Event_FindCircle,  5u },
-// };
+static const NF_Stage_t NF_STAGES[] = {
+    { Event_Collect_R, 1u },
+{ Event_Navigation, 1u },
+    { Event_PlaceDown, 3u },
+    { Event_Collect_L,    1u },
+    { Event_FindCircle,  5u },
+};
 #endif
 
 /* 流程进度。对应旧 NLF_TASK 的 P_Nava / NavafterNum[P_Nava] / i / flag_finish。 */
@@ -307,6 +333,20 @@ static const struct {
  */
 static bool NF_RouteStep(void)
 {
+    /* 打断(g_route_abort)是给**正在跑的那一段**用的 —— Nav_GoToWorld 在段内看到它
+     * 就把这一段提前结束。但**段与段之间**到达的进料事件没有段可打断, 标志会一直
+     * 挂着, 直到下一段刚起步时被消费 → 下一段瞬间返回(Nav_LastAborted), 而游标
+     * 照常 s_idx++ → **平白吃掉一个点位**。
+     *
+     * 现场表现: 收完第 1 个奖杯后"莫名跳一个点位"(V1.24.4 修)。
+     * 成因是 V1.24.3 的"到位后向前蹭料": 物块是在**导航段结束之后**才被顶进去的,
+     * 那个进料事件正好落进这个窗口。NF_CreepForward() 结尾清一次只能挡住"蹭的
+     * 过程中"来的; 蹭完才来的挡不住, 两个任务看到 IR 的时刻差 10~15ms, 谁先谁后
+     * 是随机的 —— 所以是偶发。
+     *
+     * @note 这**不影响**正常打断: 段**中途**来的进料仍然由 Nav_GoToWorld 内部消费。 */
+    g_route_abort = 0u;
+
 #if NF_ROUTE_ARC
     static uint8_t s_arc_idx = 0u;
 
@@ -353,9 +393,9 @@ static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
  * 所以在流程派发下一个阶段**之前**, 原地向前低速蹭一小段, 一直蹭到物块
  * "完全进入"进料口为止。距离和时长两道限幅, 蹭不进去也不会一直顶着。
  * ================================================================== */
-#define NF_CREEP_FWD_M       0.06f    /* 前进距离上限 (m) —— 第一道限幅 */
-#define NF_CREEP_VMPS        0.06f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
-#define NF_CREEP_TIMEOUT_MS  1200u    /* 总时长上限 (ms) —— 第二道限幅 */
+#define NF_CREEP_FWD_M       0.13f    /* 前进距离上限 (m) —— 第一道限幅 */
+#define NF_CREEP_VMPS        0.3f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
+#define NF_CREEP_TIMEOUT_MS  2400u    /* 总时长上限 (ms) —— 第二道限幅 */
 #define NF_CREEP_TICK_MS     10u      /* 蹭的控制周期 (ms) */
 
 /** 需要"到位后向前蹭"的点位 (1 基点号, 与 NavigationMecanum.c 的
@@ -426,9 +466,7 @@ static void NF_Stage_Navigation(void)
 {
     bool arrived = NF_RouteStep();
 
-    /* 采集点位: 正常到位(不是被 IR 打断、也不是超时) 但进料口还没反应 →
-     * 说明车停得离物块差一点, 向前蹭一小段把它顶进去。
-     * 被 IR 打断的那一路不用蹭 —— 物块已经进来了。 */
+
     if (arrived && !Nav_LastAborted() && NF_NeedCreep(Nav_LastWaypointNo())) {
         NF_CreepForward();
     }
@@ -442,7 +480,6 @@ static void NF_Stage_Navigation(void)
     if (NAV_count < need)
     {
         NLF_Request(Event_Navigation);
-
         return;
     }
     SystemMode_t next;
@@ -521,7 +558,7 @@ static void NF_Stage_FindCircle(void)
         /* 每次调用推进一格 */
     }
 
-    Place('O', g_circle_avg_x, g_circle_avg_y, 0u);
+    Place('O', g_circle_avg_x, g_circle_avg_y, 0u, TT_CurrentSlot());   /* 物料: 松开刚转到门口那个槽 */
 
     g_circle_dir = ' ';         /* 清残留, 让下一次找圆重新判定 */
     TT_RotateReset();
@@ -554,7 +591,8 @@ static void NF_Stage_PlaceDown(void)
         }
 
         if (rank == third_place) {
-            BlockBasic_LiftTo(DOWN, 33u);
+            BlockBasic_LiftToAbs(5.0f);    /* 季军预下降: 降到 5mm (等价原 DOWN,33: 38-33) */
+            osDelay(1200);
         }
         BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
@@ -573,11 +611,12 @@ static void NF_Stage_PlaceDown(void)
     }
 
     /* 3) 放置 + 收尾 */
-    Place('O', g_circle_avg_x, g_circle_avg_y, NF_PLACE_HEIGHT[(uint8_t)rank]);
+    Place('O', g_circle_avg_x, g_circle_avg_y, NF_PLACE_HEIGHT[(uint8_t)rank], tslot);   /* 奖杯: 松开该奖杯所在的槽 */
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
-        BlockBasic_LiftTo(UP, 20u);   /* 亚军: 放完先把丝杆升起 */
+        BlockBasic_LiftToAbs(43.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
+        osDelay(1000);
     }
 
     s_place_idx++;

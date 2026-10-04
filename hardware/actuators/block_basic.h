@@ -130,6 +130,31 @@ typedef struct {
  */
     float BlockBasic_LiftTo(uint8_t dir, float pos);
 
+/**
+ * @brief  丝杆升降 —— **绝对位置**（指定点位）指令。
+ * @param  target_mm  目标高度, 单位 mm, 有效范围 [0, BLOCK_LIFT_MAX_MM]
+ * @retval true   已下发（方向与脉冲由内部按当前位置算出来）
+ * @retval false  越界未执行 / 双机械臂车型不支持
+ *
+ * @note   调用方只管说"升到多少 mm"，不必记当前高度、也不用心算相对量。
+ *         旧的相对版 `BlockBasic_LiftTo(dir, delta)` 是**顺序相关**的 ——
+ *         中间某一拍被跳过（例如某次 PlaceDown 跳到"找不到"分支），
+ *         后面所有高度就整体错位；新代码请用本函数。
+ * @note   已经停在该高度时直接返回 true，不发 CAN。
+ * @note   两个 API **共用同一份**"软件记录的当前高度"，混用不会错位。
+ * @warning 软件高度必须与机械零点一致：`BPlace_SetZero()` 把丝杆压到限位归零
+ *          之后要调 `BlockBasic_LiftSync(0)`（目前上电顺序恰好满足 —— 归零后
+ *          才第一次动；以后若有二次归零，记得补这一句）。
+ */
+bool BlockBasic_LiftToAbs(float target_mm);
+
+/**
+ * @brief  把软件记录的丝杆高度同步成机械实际位置。
+ * @param  cur_mm  当前实际高度，单位 mm；会夹到 [0, BLOCK_LIFT_MAX_MM]。
+ * @note   归零（压限位）之后调用，例如 `BlockBasic_LiftSync(0.0f)`。
+ */
+void BlockBasic_LiftSync(float cur_mm);
+
 #if BLOCK_USE_DUAL_ARM
 /**
  * @brief  只计算双机械臂高度对应关系，不实际输出 PWM。
@@ -167,7 +192,19 @@ BlockStatus BlockBasic_TurntableTo(uint8_t block_pos);
  *         应先调用本函数同步软件状态。
  */
 void Servo_Angle(float angle_deg);
-void Place(char dir,float x,float y,uint16_t height);
+
+/**
+ * @brief  放置: 前移到位 → 丝杆下降 → **松开该槽夹爪(解锁)** → 后退。
+ * @param  dir     'O' = 正常放置 (传其它值啥也不做)
+ * @param  x, y    找圆给出的偏差量 (m), 经 PLACE_CIRCLE_SCALE_M 折算
+ * @param  height  丝杆下降高度 (mm); 0 = 不下降
+ * @param  slot    **正在放的那个物理槽号 (1~5)** —— 用来松开对应的夹爪:
+ *                 奖杯路径传 `tslot`, 物料路径传 `TT_CurrentSlot()`。
+ * @note   V1.24.5 加了 slot 参数: 原来这里调的是**无参**的
+ *         `BlockBasic_GripperRelease()`, 而它是要槽号的 —— 编译不过
+ *         (`too few arguments`); 而且"松开哪个夹爪"本来也只能由调用方告诉。
+ */
+void Place(char dir,float x,float y,uint16_t height,uint8_t slot);
 
 void Servo_SetAngle(float Angle);
 bool BPlace_SetZero(void) ;
