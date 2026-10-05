@@ -24,11 +24,12 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   1.729634f, 0.055066f, 0.071480f }, /*  5 冠军点 */
     {   1.728531f, 0.303497f, 0.078284f }, /*  6 季军点 */
 
-    {   1.801493f, 0.768879f, 1.459011f }, /*  7 e 点 */
-    {   1.674586f, 1.154120f, 2.231404f }, /*  8 d 点 */
-    {   1.308177f, 1.418482f, 2.770012f }, /*  9 c 点 */
-    {   0.865644f, 1.449459f,-2.979479f }, /* 10 b 点 */
-    {   0.450772f, 1.269985f,-2.411954f }, /* 11 a 点 */
+    {   2.002776f, 0.489762f, 1.540430f},/*圆弧起点*/
+    //{   1.801493f, 0.768879f, 1.459011f }, /*  7 e 点 */
+    // {   1.674586f, 1.154120f, 2.231404f }, /*  8 d 点 */
+    // {   1.308177f, 1.418482f, 2.770012f }, /*  9 c 点 */
+    // {   0.865644f, 1.449459f,-2.979479f }, /* 10 b 点 */
+    // {   0.450772f, 1.269985f,-2.411954f }, /* 11 a 点 */
 
     {   1.076288f,-0.395111f,-1.545575f }, /* 12 摆放e 点 */
     {   0.946693f, 0.100097f,-1.499596f }, /* 13 摆放d 点 */
@@ -39,7 +40,7 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   0.0f,  0.0f, 0.0f }, /* 17 回家点 */
 };
 
-uint8_t g_waypoint_count = 17u;
+uint8_t g_waypoint_count = 13u;
 
 /* ==================================================================
  * V1.23.0: 路线段打断
@@ -445,7 +446,7 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
     PoseData_t pose;
     locator_ops9.get_pose(&pose);
     for (uint32_t wait = 0u; !pose.valid && wait < 500u; wait += 20u) {
-        osDelay(20);
+        osDelay(5);
         locator_ops9.get_pose(&pose);
     }
     if (!pose.valid) {
@@ -471,12 +472,12 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
         locator_ops9.get_pose(&pose);
 
         /* V1.23.0 打断: 外部 (IR 进料) 要求立刻收尾 */
-        if (g_route_abort)
-        {
-            g_route_abort = 0u;
-            printf("[NAV-ARC] ABORT swept=%.3f rad\r\n", swept);
-            break;
-        }
+        // if (g_route_abort)
+        // {
+        //     g_route_abort = 0u;
+        //     printf("[NAV-ARC] ABORT swept=%.3f rad\r\n", swept);
+        //     break;
+        // }
 
         if (!pose.valid)
         {

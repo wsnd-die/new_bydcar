@@ -95,7 +95,7 @@ extern volatile uint8_t g_nav_running;
  * 圆弧导航 (Nav_Cricle) 参数 —— V1.26.0, OPS9 闭环
  * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
-#define NAV_ARC_V         0.35f    /* 圆弧线速度 m/s */
+#define NAV_ARC_V         0.8f    /* 圆弧线速度 m/s */
 #define NAV_ARC_ACC       0.8f     /* 线速度软启动加速度 m/s² */
 #define NAV_ARC_KP_R      1.2f     /* 径向误差修正增益 1/s (把车拉回圆上) */
 #define NAV_ARC_VMAX_R    0.5f     /* 径向修正速度限幅 m/s */
