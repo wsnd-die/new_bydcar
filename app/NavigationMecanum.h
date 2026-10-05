@@ -93,6 +93,15 @@ extern volatile uint8_t g_nav_running;
 #define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 
+/* ============================================================
+ * 圆弧导航 (Nav_Cricle) 参数 —— V1.26.0, OPS9 闭环
+ * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
+ * ============================================================ */
+#define NAV_ARC_V         0.8f    /* 圆弧线速度 m/s */
+#define NAV_ARC_ACC       0.8f     /* 线速度软启动加速度 m/s² */
+#define NAV_ARC_KP_R      1.2f     /* 径向误差修正增益 1/s (把车拉回圆上) */
+#define NAV_ARC_VMAX_R    0.5f     /* 径向修正速度限幅 m/s */
+
 
 
 extern World_Dir_t g_waypoints[NAV_WAYPOINT_MAX];
@@ -187,6 +196,35 @@ bool Nav_LastAborted(void);
  * @param is_trophy true=奖杯循迹(LinFolR)校准亚军点, false=物料循迹(LinFolL)校准a点
  */
 void Nav_CalibrateAfterTrace(bool is_trophy);
+
+/** 圆弧转向: L = 左弧 (CCW, 圆心在车左侧), R = 右弧 (CW, 圆心在车右侧)。 */
+typedef enum {
+    Nav_CricleL = 0,   /* 向左走弧 */
+    Nav_CricleR,       /* 向右走弧 */
+} Nav_Cricle_t;
+
+/**
+ * @brief 定半径圆弧 —— 基于 OPS9 位置闭环, 阻塞直到走完或超时
+ *
+ * 从当前位姿出发, 以半径 Radius 走一条圆弧, 扫过圆心角 Angle 后停下。
+ * 方向由 Cricle_t 给出: Nav_CricleL 向左 (CCW), Nav_CricleR 向右 (CW)。
+ *
+ * 控制结构: 圆心由起点位姿推得 (左弧圆心在车左侧 R 处); 每拍用 OPS9
+ * 算出当前扫过的圆心角与径向误差 —— 切向匀速 (软启动) + 径向 P 修正 +
+ * 航向"前馈 v/R + 切线误差 P"闭环, 经 Mecanum_Calc_Full_V 下发电机。
+ *
+ * @note  Angle 单位是**弧度** (与全工程角度约定一致), 度数写 NAV_DEG2RAD 倍。
+ * @note  入口按契约关角度环 (g_angle_ctrl_enable=0 + osDelay(20)) 独占电机,
+ *        退出**不恢复**该标志 (与 Nav_GoToWorld 同, 调用方需要角度环自己置 1)。
+ * @note  反馈无效按 NAV_MAX_INVALID_TICKS 容忍; 超时按几何时长 ×1.5 + 2s 兜底;
+ *        支持 g_route_abort 打断 (IR 进料)。任何出口都零速停车并刷新 Self_Dir。
+ * @warning Radius / Angle 只取绝对值 —— 方向只能靠 Cricle_t 给, 传负值不报错。
+ *
+ * @param Cricle_t  方向: Nav_CricleL 左弧 / Nav_CricleR 右弧
+ * @param Radius    圆弧半径, 单位 m (>0)
+ * @param Angle     扫过的圆心角, 单位 rad (>0)
+ */
+void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle);
 /**
  * @brief 依次执行所有路径点
  *

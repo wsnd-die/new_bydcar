@@ -421,6 +421,7 @@ void KEY_TASK(void *argument)
 {
   /* USER CODE BEGIN KEY_TASK */
 uint8_t key_StartOK=0;
+
   for(;;)
   {
     Key_Update();
