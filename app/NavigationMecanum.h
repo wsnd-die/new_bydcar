@@ -94,8 +94,8 @@ extern volatile uint8_t g_nav_running;
 
 
 extern World_Dir_t g_waypoints[NAV_WAYPOINT_MAX];
-extern uint8_t      g_waypoint_count;
-
+extern uint8_t     g_waypoint_count;
+extern uint8_t     s_idx;
 /* ============================================================
  * 函数声明
  * ============================================================ */

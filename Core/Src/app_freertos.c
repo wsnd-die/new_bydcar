@@ -298,11 +298,17 @@ void ops9imu_fuction(void *argument)
 
   /* Infinite loop */
   active_locator->init();
+  //OPS9_G491_UART3_SetPose(2.084f, -257.49f, 1723.84f);
+  //OPS9_G491_UART3_SetPose(2.084f, -257.49f, 1723.84f);
   for(;;)
   {
     active_locator->update();
     active_locator->get_pose(&o_pose);
-    // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+    if (Key_WasLongPressed(KEY_START) && !BlockCollect_IsRunning() ) {
+      printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+
+    }
+   // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
     osDelay(5);
   }
   /* USER CODE END ops9imu_fuction */
@@ -414,21 +420,21 @@ void AC_Fuction(void *argument)
 void KEY_TASK(void *argument)
 {
   /* USER CODE BEGIN KEY_TASK */
-
+uint8_t key_StartOK=0;
   for(;;)
   {
     Key_Update();
 
     /* 用 Key_WasPressed (边沿, 读后清) 而不是 Key_IsPressed (电平):
      * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
-    if (Key_WasPressed(KEY_START)&& !BlockCollect_IsRunning())
-    {
-      printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
-      NLF_Request(Event_START);
-      Servo_SetAngle(70);
-      osDelay(500);
-      Servo_SetAngle(40);
-    }
+    // if (Key_WasPressed(KEY_START) && !BlockCollect_IsRunning() && !key_StartOK)
+    // {
+    //   printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
+    //   //NLF_Request(Event_START);
+    //   NLF_Request(Event_STARTSecnd);
+    //   Servo_SetAngle(40);
+    //   key_StartOK=1;
+    // }
 
     osDelay(10);
   }

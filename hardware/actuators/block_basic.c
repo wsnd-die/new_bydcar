@@ -387,12 +387,35 @@ void Servo_Angle(float angle_deg)
     angle_servo = normalize_servo(angle_deg);
     turntable_write_angle(angle_servo);
 }
+/*
+ *
+ *
+ */
+static float Now_Angle=90;
+#define ANGLE_STEP     60.0f
+#define CostTime      2.0f
 
+static void  Servo_AngleAcc(float angle_deg) {
+    float error,step;
+    error=angle_deg-Now_Angle;
+    step=error/ANGLE_STEP;
+
+    for (uint8_t i=0;i<ANGLE_STEP;i++) {
+        Now_Angle+=step;
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4,Now_Angle/ 180 * 2000 + 500);
+        osDelay(CostTime/ANGLE_STEP*1000);
+    }
+
+
+}
 void Servo_SetAngle(float Angle)
 {
+
     if(Angle>=130){Angle=130;}
     if(Angle<=37){Angle=37;}
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, Angle / 180 * 2000 + 500);
+
+    // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, Angle / 180 * 2000 + 500);
+    Servo_AngleAcc(Angle);
 
 }
 /* K230 圆心像素 → 车体横向位移 (m/像素)。比例/方向需实测调, 反了取负 */

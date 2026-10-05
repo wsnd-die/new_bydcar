@@ -14,10 +14,12 @@
 typedef struct {
     GPIO_TypeDef *port;
     uint16_t      pin;
-    uint8_t       stable;    /* 消抖后状态: 1 = 按下 */
-    uint8_t       cnt;       /* 与 stable 相反的连续采样数 */
-    uint8_t       pressed;   /* 有按下边沿, 读后清 */
-    uint8_t       released;  /* 有抬起边沿, 读后清 */
+    uint8_t       stable;       /* 消抖后状态: 1 = 按下 */
+    uint8_t       cnt;          /* 与 stable 相反的连续采样数 */
+    uint8_t       pressed;      /* 有按下边沿, 读后清 */
+    uint8_t       released;     /* 有抬起边沿, 读后清 */
+    uint16_t      hold;         /* 稳定按下持续节拍数 (到 KEY_LONG_PRESS_TICKS 封顶) */
+    uint8_t       long_pressed; /* 有长按事件, 读后清 */
 } KeyCtx_t;
 
 static KeyCtx_t s_key[KEY_COUNT] = {
@@ -34,10 +36,12 @@ void Key_Init(void)
 {
     /* 按当前电平取初值, 免得开关本来按着时上电就报一次边沿 */
     for (uint8_t i = 0; i < (uint8_t)KEY_COUNT; i++) {
-        s_key[i].stable   = raw_pressed(&s_key[i]);
-        s_key[i].cnt      = 0u;
-        s_key[i].pressed  = 0u;
-        s_key[i].released = 0u;
+        s_key[i].stable       = raw_pressed(&s_key[i]);
+        s_key[i].cnt          = 0u;
+        s_key[i].pressed      = 0u;
+        s_key[i].released     = 0u;
+        s_key[i].hold         = 0u;
+        s_key[i].long_pressed = 0u;
     }
 }
 
@@ -49,9 +53,20 @@ void Key_Update(void)
 
         if (raw == k->stable) {
             k->cnt = 0u;            /* 有一拍回到原电平, 抖动计数作废 */
+            if (raw != 0u) {
+                /* 稳定按下期间累计时长, 到 KEY_LONG_PRESS_TICKS 封顶且只报一次 */
+                if (k->hold < (uint16_t)KEY_LONG_PRESS_TICKS) {
+                    if (++k->hold == (uint16_t)KEY_LONG_PRESS_TICKS) {
+                        k->long_pressed = 1u;
+                    }
+                }
+            } else {
+                k->hold = 0u;       /* 稳定抬起, 时长归零 */
+            }
         } else if (++k->cnt >= (uint8_t)KEY_DEBOUNCE_SAMPLES) {
             k->cnt    = 0u;
             k->stable = raw;
+            k->hold   = 0u;         /* 电平翻转, 时长重计 */
             if (raw != 0u) {
                 k->pressed = 1u;
             } else {
@@ -81,5 +96,14 @@ bool Key_WasReleased(KeyId_t k)
         return false;
     }
     s_key[(uint8_t)k].released = 0u;
+    return true;
+}
+
+bool Key_WasLongPressed(KeyId_t k)
+{
+    if ((uint8_t)k >= (uint8_t)KEY_COUNT || s_key[(uint8_t)k].long_pressed == 0u) {
+        return false;
+    }
+    s_key[(uint8_t)k].long_pressed = 0u;
     return true;
 }

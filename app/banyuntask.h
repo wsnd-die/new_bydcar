@@ -33,7 +33,7 @@ typedef enum {
      Event_PlaceDown            = 9,   /* 放置 */
      Event_GoHome               = 10,   /* 回家 */
      Event_ArcRun               = 11,   /* 按 Arc_SetParam 的参数跑一段圆弧 */
-
+     Event_STARTSecnd           =12,/*从第二个任务开始启动*/
 } SystemMode_t;
 
 /* ============================================================

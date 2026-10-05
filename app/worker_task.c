@@ -638,6 +638,17 @@ static void NF_Start(void)
     }
     NLF_Request(mode);
 }
+
+
+void NF_StartSecnd() {
+    SystemMode_t mode = Event_Navigation;      /* 初值只是兜底, 见下 */
+    OPS9_G491_UART3_SetPose(2.084f, -257.49f, 1723.84f);
+    s_idx=6;
+    s_stage_idx=2;
+    NLF_Request(mode);
+
+}
+
 /** 回家: 只走到 g_waypoints[] 的最后一行 (表里标的"17 回家点"), 然后停车。
  *  @note  V1.24.2 之前这里调 `Nav_RunWaypoints()`, 那是**从 0 号点开始把整张
  *         表再走一遍**(17 个点) —— 加上流程自己的十几段导航, 表现就是"连着
@@ -699,7 +710,9 @@ void NLF_RunFlow(SystemMode_t mode)
         case Event_START:
             NF_Start();
             break;
-
+        case Event_STARTSecnd:
+            NF_StartSecnd();
+            break;
         case Event_STOP:
             /* 急停 */
             Arc_Abort();                /* = 关环 + 清线速度/前馈 */
