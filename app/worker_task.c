@@ -121,7 +121,7 @@ void Angle_Fuction(void)
 }
 void FC_Fuction(void)
 {
-    NX_SetMode(NX_MODE_CIRCLE);
+    NX_SetMode(NX_MODE_YOLO);
     NX_ApplyMode();
     osDelay(FC_TASK_PERIOD_MS);
 }
@@ -213,12 +213,13 @@ typedef struct {
 
 #if 1   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
 static const NF_Stage_t NF_STAGES[] = {
-    { Event_Collect_R, 1u },
-{ Event_Navigation, 1u },
-    { Event_PlaceDown, 3u },
-    { Event_Collect_L,    1u },
+     { Event_Collect_R, 1u },
+    { Event_Navigation, 1u },
+     { Event_PlaceDown, 3u },
+    { Event_Collect_L,   1u },
     { Event_FindCircle,  5u },
 };
+
 #endif
 
 /* 流程进度。对应旧 NLF_TASK 的 P_Nava / NavafterNum[P_Nava] / i / flag_finish。 */

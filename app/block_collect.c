@@ -188,6 +188,7 @@ static void collect_slots(void)
             printf("[COLLECT] no cone, abort\r\n");
             return;     /* 圆锥没来 */
         }
+
         (void)BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
 
         for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++)

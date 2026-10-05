@@ -304,10 +304,10 @@ void ops9imu_fuction(void *argument)
   {
     active_locator->update();
     active_locator->get_pose(&o_pose);
-    if (Key_WasLongPressed(KEY_START) && !BlockCollect_IsRunning() ) {
-      printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
-
-    }
+    // if (Key_WasLongPressed(KEY_START) && !BlockCollect_IsRunning() ) {
+    //   printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+    //
+    // }
    // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
     osDelay(5);
   }
@@ -336,7 +336,7 @@ void gripper_task(void *argument)
     servo_set_pos(id, SCS_OPEN);
   }
   // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
-  BlockBasic_LiftToAbs(3.0f);     /* 夹爪初始化抬到 3mm (等价原 UP,3) */
+  BlockBasic_LiftToAbs(5.0f);     /* 夹爪初始化抬到 3mm (等价原 UP,3) */
   printf("[scs] gripper init done\r\n");
   for (;;)
   {
@@ -427,14 +427,14 @@ uint8_t key_StartOK=0;
 
     /* 用 Key_WasPressed (边沿, 读后清) 而不是 Key_IsPressed (电平):
      * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
-    // if (Key_WasPressed(KEY_START) && !BlockCollect_IsRunning() && !key_StartOK)
-    // {
-    //   printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
-    //   //NLF_Request(Event_START);
-    //   NLF_Request(Event_STARTSecnd);
-    //   Servo_SetAngle(40);
-    //   key_StartOK=1;
-    // }
+    if (Key_WasReleased(KEY_START) && !BlockCollect_IsRunning() && !key_StartOK)
+    {
+      printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
+      NLF_Request(Event_START);
+      //NLF_Request(Event_STARTSecnd);
+      Servo_SetAngle(40);
+      key_StartOK=1;
+    }
 
     osDelay(10);
   }

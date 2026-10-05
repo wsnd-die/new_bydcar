@@ -391,9 +391,9 @@ void Servo_Angle(float angle_deg)
  *
  *
  */
-static float Now_Angle=90;
-#define ANGLE_STEP     60.0f
-#define CostTime      2.0f
+static float Now_Angle=127;
+#define ANGLE_STEP     30.0f
+#define CostTime      1.0f
 
 static void  Servo_AngleAcc(float angle_deg) {
     float error,step;
