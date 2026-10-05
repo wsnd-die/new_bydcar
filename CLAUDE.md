@@ -372,6 +372,7 @@ active_locator->get_pose(&robot_pose);
 | V1.25.0 | 2026-10-05 | 新增：**丝杆绝对位置指令** `BlockBasic_LiftToAbs()` / `LiftSync()`（旧相对版保留，两版共用 `lift_current`）；5 处调用点迁到等价值 3/28/43/5，`Place()` 内"下降 5"**保持相对**；顺带修正旧注释里方向写反（实为 `UP = 0`） | [2026-10-05](clauderecord/2026-10-05.md) |
 | V1.25.1 | 2026-10-05 | 修改：**启动键改长按** —— 驱动新增 `Key_WasLongPressed()`（稳定按下 ≈1s 报一次，读后清），`ops9imu_fuction` 触发点由 `Key_WasPressed` 换成长按；KEY_LIMIT 语义不变 | [2026-10-05](clauderecord/2026-10-05.md) |
 | V1.25.2 | 2026-10-05 | 修改：`g_waypoints[]` 1~16 号点按现场重新示教值整体更新（15/16 摆放点 yaw 由占位 0 变为 ≈47°/49°，7 号 e 点西移 0.168 m）；17 号回家点未动 | [2026-10-05](clauderecord/2026-10-05.md) |
+| V1.26.0 | 2026-10-05 | 新增：**定半径圆弧 `Nav_Cricle()`** —— OPS9 位置闭环（圆心由起点推得，切向匀速+径向 P 修正+航向前馈 v/R；`Nav_Cricle_t` 左/右弧，扫够角度才退出，支持打断/超时） | [2026-10-05](clauderecord/2026-10-05.md) |
 | V1.20.4 | 2026-10-02 | 修复：**MSP 帧解析器与发送端格式对不上**，颜色恒为兜底值 —— 按真实帧 `A3<color><r><g><b>B3` 重写状态机，颜色直接取帧头后的字符；RGB 段因 `%d%d%d` 无分隔符**原理上切不开**故丢弃；取到色打印 `[MSP] color='r' -> RED` | [2026-10-02](clauderecord/2026-10-02.md) |
 | V1.20.5 | 2026-10-02 | 修改：`MSP_Color_Init()` 调用点归位到 `main.c` 的 `USER CODE BEGIN 2`；**顺带修掉一处重复调用**（`usart.c` + `app_freertos.c` 各一份，第二次会 memset 后 `HAL_BUSY` 退出） | [2026-10-02](clauderecord/2026-10-02.md) |
 | V1.20.6 | 2026-10-02 | 修改：`MSP_Color_Init()` 按用户要求从 `main.c` 移回 `app_freertos.c` 的 `USER CODE BEGIN Init`（**仍只保留一处调用**，V1.20.5 修掉的重复调用未恢复） | [2026-10-02](clauderecord/2026-10-02.md) |

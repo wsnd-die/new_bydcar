@@ -415,6 +415,138 @@ void Nav_CalibrateAfterTrace(bool is_trophy)
            is_trophy ? "trophy" : "material");
 }
 
+/* ==================================================================
+ * 定半径圆弧 (OPS9 位置闭环) —— V1.26.0
+ *
+ * 走法: 圆心由起点位姿推得 (左弧圆心在车左侧, 右弧在右侧), 每拍用 OPS9
+ * 算「已扫过的圆心角 + 径向误差」:
+ *   - 切向: 匀速 v (软启动), 方向由 dir 定;
+ *   - 径向: -Kp·e_r 把车拉回半径 R 的圆上;
+ *   - 航向: 前馈 v/R + 切线误差 P + wz D, 让车头保持圆弧切线。
+ * 阻塞在本函数内, 扫够 |Angle| 才退出; 超时 / 打断也在此收尾。
+ * ================================================================== */
+
+void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
+{
+    const float R     = fabsf(Radius);
+    const float sweep = fabsf(Angle);
+    const float dir   = (Cricle_t == Nav_CricleR) ? -1.0f : 1.0f; /* L=CCW(+), R=CW(-) */
+
+    if (R < 0.01f || sweep < 0.01f) {
+        printf("[NAV-ARC] 参数非法 R=%.3f A=%.3f, 不动作\r\n", R, sweep);
+        return;
+    }
+
+    /* 1. 借走电机控制权 (与 Nav_GoToWorld 同契约, 退出不恢复角度环) */
+    g_angle_ctrl_enable = 0;
+    osDelay(20);
+
+    /* 2. 起点位姿 → 圆心。左弧圆心 = 车左侧 R 处; 右弧 = 右侧 R 处。 */
+    PoseData_t pose;
+    locator_ops9.get_pose(&pose);
+    for (uint32_t wait = 0u; !pose.valid && wait < 500u; wait += 20u) {
+        osDelay(20);
+        locator_ops9.get_pose(&pose);
+    }
+    if (!pose.valid) {
+        printf("[NAV-ARC] 起点 OPS9 无效, 放弃\r\n");
+        return;
+    }
+
+    float c0 = cosf(pose.yaw), s0 = sinf(pose.yaw);
+    float cx = pose.x - dir * R * s0;   /* dir=+1(左): R·(-sin,cos); dir=-1(右): R·(sin,-cos) */
+    float cy = pose.y + dir * R * c0;
+
+    float    v_cmd   = 0.0f;    /* 线速度软启动当前值 */
+    float    swept   = 0.0f;    /* 已扫过圆心角 (带方向, 逐拍累加) */
+    float    last_th = atan2f(pose.y - cy, pose.x - cx);
+    uint8_t  invalid = 0u;
+    uint32_t t0      = osKernelGetTickCount();
+    uint32_t timeout_ms = (uint32_t)(sweep * R / NAV_ARC_V * 1.5f * 1000.0f) + 2000u;
+
+    g_nav_running = 1u;
+
+    for (;;)
+    {
+        locator_ops9.get_pose(&pose);
+
+        /* V1.23.0 打断: 外部 (IR 进料) 要求立刻收尾 */
+        if (g_route_abort)
+        {
+            g_route_abort = 0u;
+            printf("[NAV-ARC] ABORT swept=%.3f rad\r\n", swept);
+            break;
+        }
+
+        if (!pose.valid)
+        {
+            invalid++;
+            if (invalid > NAV_MAX_INVALID_TICKS) { v_cmd = 0.0f; NAV_Stop(); }
+            osDelay(NAV_LOOP_TICKS);
+            continue;
+        }
+        invalid = 0u;
+
+        v_cmd = NAV_Ramp(v_cmd, NAV_ARC_V, NAV_ARC_ACC, NAV_DT);
+
+        /* 扫角累加: 每拍增量很小, wrap 到 ±π 后跨边界不丢圈数 */
+        float th = atan2f(pose.y - cy, pose.x - cx);
+        swept += NAV_WrapPi(th - last_th);
+        last_th = th;
+
+        if (swept * dir >= sweep)       /* 沿所选方向扫够目标角 */
+        {
+            printf("[NAV-ARC] DONE dir=%s swept=%+.3f rad R=%.3f\r\n",
+                   (Cricle_t == Nav_CricleR) ? "R" : "L", swept, R);
+            break;
+        }
+
+        /* 径向误差 (正 = 圆外) → 修正速度拉回圆上 */
+        float rx = pose.x - cx, ry = pose.y - cy;
+        float r  = sqrtf(rx * rx + ry * ry);
+        if (r < 1e-3f) { r = 1e-3f; }   /* 车恰在圆心 (理论上不会), 防除零 */
+        float e_r = r - R;
+        float nx  = rx / r, ny = ry / r;          /* 圆心 → 车 单位矢 */
+        float tx  = -dir * ny, ty = dir * nx;     /* 切向单位矢 (沿前进方向) */
+
+        float vr  = NAV_Clamp(-NAV_ARC_KP_R * e_r, -NAV_ARC_VMAX_R, NAV_ARC_VMAX_R);
+        float vwx = v_cmd * tx + vr * nx;
+        float vwy = v_cmd * ty + vr * ny;
+
+        /* 航向
+         * : 前馈 v/R + 切线误差 P - wz D (同 Nav_GoToWorld 手法) */
+        float w_ff     = dir * v_cmd / R;
+        float e_yaw    = NAV_WrapPi(atan2f(ty, tx) - pose.yaw);
+        float e_yaw_dz = (fabsf(e_yaw) < NAV_YAW_DEADBAND) ? 0.0f : e_yaw;
+        float wz       = (fabsf(pose.wz) < NAV_YAW_DEADBAND) ? 0.0f : pose.wz;
+        float w_w = w_ff + NAV_KP_YAW * e_yaw_dz - NAV_KD_YAW * PID_Filter(0.25f, wz);
+        w_w = NAV_Clamp(w_w, -NAV_VMAX_W, NAV_VMAX_W);
+
+        /* 世界 → 车体 → 四轮 */
+        float c = cosf(pose.yaw), s = sinf(pose.yaw);
+        float bvx = vwx * c + vwy * s;
+        float bvy = -vwx * s + vwy * c;
+        MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
+        Send_commandmotor(&res);
+
+        if ((osKernelGetTickCount() - t0) >= timeout_ms)
+        {
+            printf("[NAV-ARC] TIMEOUT swept=%.3f/%+.3f rad R=%.3f\r\n",
+                   swept, dir * sweep, R);
+            break;
+        }
+
+        osDelay(NAV_LOOP_TICKS);
+    }
+
+    NAV_Stop();
+    if (pose.valid) {
+        Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
+    }
+
+    g_nav_running = 0u;
+    NLF_Request(Event_STOP);
+}
 
 
 

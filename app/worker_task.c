@@ -213,11 +213,12 @@ typedef struct {
 
 #if 1   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
 static const NF_Stage_t NF_STAGES[] = {
-     { Event_Collect_R, 1u },
-    { Event_Navigation, 1u },
-     { Event_PlaceDown, 3u },
-    { Event_Collect_L,   1u },
-    { Event_FindCircle,  5u },
+    {Event_NavCircleL,1},
+    //  { Event_Collect_R, 1u },
+    // { Event_Navigation, 1u },
+    //  { Event_PlaceDown, 3u },
+    // { Event_Collect_L,   1u },
+    // { Event_FindCircle,  5u },
 };
 
 #endif
@@ -703,11 +704,13 @@ void NLF_RunFlow(SystemMode_t mode)
             NF_Stage_GoHome();
             break;
 
-        case Event_ArcRun:
+        case Event_NavCircleL:
             /* 跑一段定半径圆弧  */
-            Arc_Run();
+            Nav_Cricle(Nav_CricleL ,  0.93, 180*NAV_DEG2RAD );
             break;
-
+        case Event_NavCircleR:
+            Nav_Cricle(Nav_CricleR , 0.93 ,180*NAV_DEG2RAD );
+            break;
         case Event_START:
             NF_Start();
             break;
@@ -719,7 +722,6 @@ void NLF_RunFlow(SystemMode_t mode)
             Arc_Abort();                /* = 关环 + 清线速度/前馈 */
             AG_Stop();
             break;
-
 
         default:
             printf("[FLOW] unhandled mode %d\r\n", (int)mode);
