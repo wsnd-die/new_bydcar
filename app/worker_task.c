@@ -254,9 +254,7 @@ static void NF_FlowSeed(void)
     for (uint8_t s = 0; s < NF_TASK1_SLOT_COUNT; s++) {
         TT_SetColor(s, NF_SLOT_COLORS[s]);
     }
-    /* 打开 TT_RotateByQR() 的"QR 模式"分支
-     * 它按 task_color[] 查物理槽位, 比默认的"1→5 顺转"更贴合旧行为。 */
-    SetQR(NF_TASK1_QR_IDX);
+
 
     /* --- 流程进度复位 --- */
     s_stage_idx   = 0u;
@@ -565,8 +563,8 @@ static void NF_Stage_FindCircle(void)
     Place('O', g_circle_avg_x, g_circle_avg_y, 0u, TT_CurrentSlot());   /* 物料: 松开刚转到门口那个槽 */
 
     g_circle_dir = ' ';         /* 清残留, 让下一次找圆重新判定 */
-    TT_RotateReset();
-    Wheel_Odom_Reset();
+    //TT_RotateReset();
+    //Wheel_Odom_Reset();
 
     NLF_Request(Event_Navigation);
 }
