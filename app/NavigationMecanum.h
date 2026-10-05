@@ -48,15 +48,15 @@ extern volatile uint8_t g_nav_running;
  * 世界系位置闭环参数 (100Hz, OPS9 反馈)
  * 全部为初版整定值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
-#define NAV_DT                 0.01f   /* 名义控制周期 s (执行器内 osDelay(5) 使实际 ~15ms) */
+#define NAV_DT                 0.011f   /* 名义控制周期 s (执行器内 osDelay(5) 使实际 ~15ms) */
 #define NAV_LOOP_TICKS         5u     /* osDelay(10) → 名义 100Hz */
 #define NAV_TIMEOUT_MS         10000u  /* 单点超时 ms */
 #define NAV_KP_XY              3.2f    /* 平移 P: 0.4m 误差 → 0.4 m/s */
 #define NAV_KD_XY              0.5f    /* 平移 D: 首版关 (OPS9 噪声放大风险) */
 #define NAV_KP_YAW             5.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
 #define NAV_KD_YAW             0.27f    /* 航向 D: 首版关 */
-#define NAV_VMAX_X            2.0f    /* x平移速度限幅 m/s */
-#define NAV_VMAX_Y            2.0f    /* y平移速度限幅 m/s */
+#define NAV_VMAX_X            2.5f    /* x平移速度限幅 m/s */
+#define NAV_VMAX_Y            2.5f    /* y平移速度限幅 m/s */
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
 #define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
@@ -86,7 +86,9 @@ extern volatile uint8_t g_nav_running;
 #endif
 #define NAV_KP_X_LIN    6.3f
 #define NAV_KP_Y_LIN    6.3f
-#define NAV_BRK_X       0.7f
+#define NAV_KD_X_LIN    0.1f
+#define NAV_KD_Y_LIN    0.1f
+#define NAV_BRK_X       0.75f
 #define NAV_BRK_Y       0.7f
 #define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */

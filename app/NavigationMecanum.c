@@ -124,24 +124,48 @@ static float NAV_Ramp(float cur, float target, float acc, float dt)
  * @param v_max  速度上限 m/s
  * @param a_brk  制动曲线减速度 m/s² (**只当上限**; 必须 ≤ 斜坡能给的减速度)
  * @param kp     近场比例增益 1/s。调大→尾巴更短; 抖/过冲就往下调
+ * @param kd     D 项增益 (无量纲)。作用在**速度**上: 该项 = -kd·v_now
+ * @param v_now  当前速度 m/s (世界系, **带符号**)。语义 = "车此刻实际在跑多快"
+ * @param choice 轴号 'x'/'y' —— 只用来选分支, **参数差异仍全在入参里**
+ *               (调用方分别传 NAV_KP_X_LIN/NAV_BRK_X/NAV_VMAX_X 与 Y 的一套)
  * @retval 参考速度 m/s (世界系)
+ *
+ * @note X/Y 写成两段独立分支, 是为了以后**按轴单独改**时只动一段、不动另一段。
+ *       目前两段逐字相同, 改任何一段前先想清楚是不是只想改该轴。
+ * @warning 末尾必须有兜底 return: 上一版 (a5b33fd) 的两段 'x'/'y' 分支都没有
+ *          else → choice 是别的字符时"有路径不返回值" (-Wreturn-type),
+ *          返回值是垃圾。
+ * @warning **v_now 传什么, 决定 D 项是不是真阻尼**(V1.25.4 备注 1):
+ *          - 传**实测**速度 → -kd·v_now 是真正的速度阻尼 (超前, 压超调);
+ *          - 传**斜坡状态** vx_cmd/vy_cmd (当前接法) → 反馈的是控制器自己的输出,
+ *            与斜坡的一拍滞后复合 → **不是阻尼, 是"把增益压成 kp/(1+kd)"**,
+ *            即接近时整体变慢。对压超调仍有效, 但车被顶住/打滑时看不出来。
  */
-static float NAV_AxisRef(float err, float v_max, float a_brk, float kp, char choice)
+static float NAV_AxisRef(float err, float v_max, float a_brk, float kp,
+                         float kd, float v_now, char choice)
 {
-    float v  = kp * err;                          /* 近场参考 (线性, 过零连续) */
-    float vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
+    if (choice == 'x')
+    {
+        float x_v  = kp * err - kd * v_now;             /* 近场 P + D (见 v_now 警告) */
+        float x_vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
 
-    /* ⚠ choice 目前只是留着占位: X/Y 的差异**全在入参里**(调用方分别传
-     *   NAV_KP_X_LIN/NAV_BRK_X 与 Y 的一套), 这里不分叉。
-     *   上一版按 'x'/'y' 写了两段逐字相同的分支, 且都没有兜底 return →
-     *   choice 是别的字符时"有路径不返回值"(-Wreturn-type), 返回值是垃圾。
-     *   将来真要按轴做**不同处理**再在这里分叉, 但必须给 else 兜底。 */
-    (void)choice;
+        if (x_v >  x_vc) x_v =  x_vc;
+        if (x_v < -x_vc) x_v = -x_vc;
 
-    if (v >  vc) v =  vc;
-    if (v < -vc) v = -vc;
+        return NAV_Clamp(x_v, -v_max, v_max);
+    }
+    if (choice == 'y')
+    {
+        float y_v  = kp * err - kd * v_now;             /* 近场 P + D (见 v_now 警告) */
+        float y_vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
 
-    return NAV_Clamp(v, -v_max, v_max);
+        if (y_v >  y_vc) y_v =  y_vc;
+        if (y_v < -y_vc) y_v = -y_vc;
+
+        return NAV_Clamp(y_v, -v_max, v_max);
+    }
+
+    return 0.0f;   /* 兜底: 未知轴号 → 零速, 不做无谓的移动 */
 }
 #endif /* NAV_XY_PROFILE */
 
@@ -184,6 +208,14 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     uint8_t  arrive  = 0u;   /* 连续到达 tick 数 */
     uint8_t  invalid = 0u;   /* 反馈连续无效 tick 数 */
 
+    /* 控制周期实测 (V1.25.4): NAV_DT=0.01 只是**名义值**, 真实一拍 =
+     * osDelay(NAV_LOOP_TICKS) + Send_commandmotor() 内的 osDelay(5) + 计算耗时。
+     * NAV_Ramp 的加速度限幅 (`acc * NAV_DT`) 用的是名义值 → 实际加/减速会比
+     * 设定值小。这里只累计, 出循环时打一行, 不占循环时间。 */
+    uint8_t  dt_armed = 0u;
+    uint32_t t_prev   = 0u;
+    uint32_t dt_sum   = 0u, dt_n = 0u;
+
 
     uint8_t s0_set = 0u;
     float   s0x = 0.0f, s0y = 0.0f;
@@ -199,6 +231,15 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     for (;;)
     {
         locator_ops9.get_pose(&pose);   /* 只读, 不调 update (ops9imu 任务在喂) */
+
+        /* 控制周期实测: 采样点固定在本行, 相邻两拍之差 = 一拍真实耗时
+         * (osDelay(NAV_LOOP_TICKS) + 下发 + 计算)。第一拍没有前一拍, 跳过。 */
+        {
+            uint32_t t_now = osKernelGetTickCount();
+            if (dt_armed) { dt_sum += (t_now - t_prev); dt_n++; }
+            else          { dt_armed = 1u; }
+            t_prev = t_now;
+        }
 
         /* V1.23.0 打断: 外部 (IR 进料) 要求立刻放弃当前这一段。
          * 消费掉这次请求后按"未到达"返回, 由 Nav_LastAborted() 区分超时。 */
@@ -252,8 +293,13 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
 #if NAV_XY_PROFILE
 
-            float vx_ref = NAV_AxisRef(ex, NAV_VMAX_X, NAV_BRK_X, NAV_KP_X_LIN,'x');
-            float vy_ref = NAV_AxisRef(ey, NAV_VMAX_Y, NAV_BRK_Y, NAV_KP_Y_LIN,'y');
+            /* v_now 取**上一拍的斜坡状态** (= 车此刻大体在跑的速度), 不是实测:
+             * 见 NAV_AxisRef 的 @warning —— 想换成真阻尼, 把这两个实参换成
+             * 实测速度即可 (OPS9 的 pose.vx/vy 恒为 0, 得自己差分)。 */
+            float vx_ref = NAV_AxisRef(ex, NAV_VMAX_X, NAV_BRK_X, NAV_KP_X_LIN,
+                                       NAV_KD_X_LIN, vx_cmd, 'x');
+            float vy_ref = NAV_AxisRef(ey, NAV_VMAX_Y, NAV_BRK_Y, NAV_KP_Y_LIN,
+                                       NAV_KD_Y_LIN, vy_cmd, 'y');
 #else
             float vx_ref = PID_calc(&pid_x, pose.x, target_x);
             float vy_ref = PID_calc(&pid_y, pose.y, target_y);
@@ -277,9 +323,11 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             {
                 if (++arrive >= NAV_ARRIVE_TICKS)
                 {
-                    printf("[NAV] ARRIVE t=%ums ex=%.3f ey=%.3f eyaw=%.3f vx=%.2f vy=%.2f | ovs=%.3f/%.3f\r\n",
+                    printf("[NAV] ARRIVE t=%ums ex=%.3f ey=%.3f eyaw=%.3f vx=%.2f vy=%.2f | ovs=%.3f/%.3f dt=%.1fms(n=%u)\r\n",
                            (unsigned)(osKernelGetTickCount() - t0),
-                           ex, ey, eyaw, vx_cmd, vy_cmd, ovs_x, ovs_y);
+                           ex, ey, eyaw, vx_cmd, vy_cmd, ovs_x, ovs_y,
+                           (dt_n > 0u) ? ((float)dt_sum / (float)dt_n) : 0.0f,
+                           (unsigned)dt_n);
                     break;
                 }
             }
@@ -293,9 +341,11 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
         if ((osKernelGetTickCount() - t0) >= NAV_TIMEOUT_MS)
         {
             NAV_Stop();
-            printf("[NAV] TIMEOUT t=%ums ex=%.3f ey=%.3f eyaw=%.3f valid=%u vx=%.2f vy=%.2f\r\n",
+            printf("[NAV] TIMEOUT t=%ums ex=%.3f ey=%.3f eyaw=%.3f valid=%u vx=%.2f vy=%.2f dt=%.1fms(n=%u)\r\n",
                    (unsigned)(osKernelGetTickCount() - t0),
-                   last_ex, last_ey, last_eyaw, (unsigned)pose.valid, vx_cmd, vy_cmd);
+                   last_ex, last_ey, last_eyaw, (unsigned)pose.valid, vx_cmd, vy_cmd,
+                   (dt_n > 0u) ? ((float)dt_sum / (float)dt_n) : 0.0f,
+                   (unsigned)dt_n);
             if (pose.valid)
             {
                 Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;

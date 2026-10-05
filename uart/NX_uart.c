@@ -133,7 +133,9 @@ void NX_RxProcessByte(uint8_t b)
     case NX_RX_COLLECT:
         NX_ctx.rx_buf[NX_ctx.rx_idx++] = b;
 
-        if (b == 0xFF) {
+        if ((NX_ctx.rx_pkt_type == 0xB4 && NX_ctx.rx_idx >= 4u) ||
+            (NX_ctx.rx_pkt_type == 0xB5 && NX_ctx.rx_idx >= 7u) ||
+            (NX_ctx.rx_pkt_type == 0xB3 && b == 0xFF)) {
             /* 包结束 */
             if (NX_ctx.rx_pkt_type == 0xB3 && NX_ctx.rx_idx >= 4) {
                 /* [A3,B3,rank,FF] — 5B=仅角度, 7B=角度+横轴位置 */
@@ -176,7 +178,6 @@ void NX_RxProcessByte(uint8_t b)
         }
         break;
     }
-    /* 重挂由 NX_RxEventCallback() 统一负责，本函数只管解析。 */
 }
 
 void NX_ErrorCallback(void)
@@ -264,11 +265,22 @@ bool NX_GetPosition(float *x, float *y)
     NX_ctx.pos_fresh = 0;
     return true;
 }
+/**
+ * @brief 取圆心偏差 (像素, 相对图像中心)。
+ * @note  **消费式** —— 读到就清 `circle_flesh`, 没有新帧返回 `false` **且不写出参**
+ *        (与 `NX_GetCircleDir()` / `NX_GetPosition()` 同款)。
+ * @warning 调用方**必须判返回值并保持上次值**。原来本函数无条件写出参、恒返回 true,
+ *          所以 `Circle_Follow()` 那边是直接 `NX_GetCirclepos(&cx,&cy);` 不判返回的
+ *          (V1.25.6 一并改了)。若别处再直接调用, 记得照 `s_last_dir` 的写法来,
+ *          否则"无新帧的拍"会拿到 0。
+ */
 bool NX_GetCirclepos(float *cx,float *cy)
 {
+    if (!NX_ctx.circle_flesh) return false;
 
     if (cx) *cx = NX_ctx.circle_x;
     if (cy) *cy = NX_ctx.circle_y;
+    NX_ctx.circle_flesh = 0;
     return true;
 }
 

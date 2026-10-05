@@ -214,7 +214,6 @@ typedef struct {
 #if 1   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
 static const NF_Stage_t NF_STAGES[] = {
      { Event_Collect_R, 1u },
-    { Event_Navigation, 1u },
      { Event_PlaceDown, 3u },
     { Event_Collect_L,   1u },
     { Event_FindCircle,  5u },
@@ -473,7 +472,7 @@ static void NF_Stage_Navigation(void)
     }
 
     NAV_count++;
-    uint8_t need = (cur_stage == COLLECT_TROPHY) ? 3u : 5u;
+    uint8_t need = (cur_stage == COLLECT_TROPHY) ? 4u : 5u;
     if (NAV_count == need)
     {
         printf("[FLOW] %s collected\r\n",(cur_stage == COLLECT_TROPHY) ? "trophy" : "block");

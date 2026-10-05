@@ -27,6 +27,9 @@ static uint8_t s_o_cnt = 0U;
 static float s_sum_x = 0.0f;   /* 确认期间圆心偏差累加 */
 static float s_sum_y = 0.0f;
 static char  s_last_dir = '?'; /* 上次方向: 摄像头每3帧才发一次, 无新帧时保持, 避免垃圾值 */
+static float s_last_cx = 0.0f; /* 上次圆心偏差: NX_GetCirclepos() 是消费式的(V1.25.6),
+                                * 无新帧时保持, 否则那几拍会拿到 0 → 分档调速一直判慢速 */
+static float s_last_cy = 0.0f;
 
 float g_circle_avg_x = 0.0f;   /* 稳定确认后的平均偏差 (供放置用, 更稳) */
 float g_circle_avg_y = 0.0f;
@@ -44,12 +47,24 @@ void Circle_Follow(void)
         s_last_dir = dir;
     }
 
-    /* ---- 1.4 读圆心偏差 → 分档调速 (远>20px快, 近≤20px慢) ---- */
-    NX_GetCirclepos(&cx, &cy);
+    /* ---- 1.4 读圆心偏差 → 分档调速 (远>20px快, 近≤20px慢) ----
+     * NX_GetCirclepos() 是**消费式**的 (V1.25.6): 无新帧返回 false 且**不写出参**。
+     * 所以这里必须判返回值并保持上次值 —— 否则"无新帧的那些拍" cx/cy 会停在
+     * 本函数开头重置的 0, dist 恒 0 → 分档调速一直判成慢速。写法与上面 dir 的
+     * s_last_dir 同款。 */
+    if (NX_GetCirclepos(&cx, &cy)) {
+        s_last_cx = cx;
+        s_last_cy = cy;
+    } else {
+        cx = s_last_cx;
+        cy = s_last_cy;
+    }
     {
         float dist = sqrtf(cx*cx + cy*cy);
         g_circle_speed = (dist > CIRCLE_XY_FAST_TH) ? CIRCLE_XY_V_FAST : CIRCLE_XY_V_SLOW;
+        printf("%f\r\n",dist);
     }
+
 
     /* ---- 1.5 稳定确认: 连续 N 次 'O' 才确认居中 ----
      * 确认期间 g_circle_dir 置 ' '(不触发放置), 车保持静止,

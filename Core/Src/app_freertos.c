@@ -341,9 +341,9 @@ void gripper_task(void *argument)
   for (;;)
   {
     BlockCollect_Poll();
-
+    // printf("%d,%d\r\n",IR_ObjectEntered(),IR_ObjectPresent());
     // MSP_Color_DebugPoll();
-    osDelay(20);
+    osDelay(100);
   }
   /* USER CODE END gripper_task */
 }

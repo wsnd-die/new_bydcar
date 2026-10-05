@@ -358,26 +358,7 @@ BlockStatus BlockBasic_TurntableTo(uint8_t block_pos)
     turntable_write_angle(angle_servo);
     return BLOCK_OK;
 }
-//
-// MecanumConfig_t Place_config = {
-//     .wheel_radius_m = 0.0375f,
-//     .half_length_m = 0.088f,
-//     .half_width_m = 0.0782f,
-//     .gear_ratio = 1.0f,
-//     .pulse_per_rev =3200 ,
-//     .max_motor_rpm = 140,
-//     .min_move_time_s = 0.1f,
-//
-//     /* 驱动器逻辑方向: 0=正向(与 Send_motor 速度环 !dir 后一致)
-//      * 原 RL/RR 误设 1, 导致 Place 位置模式下后轮反转, 车打转 */
-//     .forward_dir[MECANUM_ADDR_FR] = 0U,
-//     .forward_dir[MECANUM_ADDR_RL] = 1U,
-//     .forward_dir[MECANUM_ADDR_FL] = 0U,
-//     .forward_dir[MECANUM_ADDR_RR] = 1U,
-//
-//     /* 驱动器加速度: 脉冲/秒^2 */
-//     .acceleration = 100U
-// };
+
 /**
  * @brief  重置软件记录的转盘当前角度，并立即输出该角度 PWM。
  * @param  angle_deg  当前机械角度，单位 deg；会归一化到 0~360。
