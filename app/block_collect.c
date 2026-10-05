@@ -19,7 +19,7 @@
  * ================================================================ */
 
 /** 转盘/夹爪动作走完之后等机构停稳, 再去读。读早了两样都会读到中途值。 */
-#define COLLECT_SETTLE_MS        200u
+#define COLLECT_SETTLE_MS        100u
 /** 等一个物块进料的上限。超时则该槽不写数据, 直接跳下一槽。
  *  @note 奖杯分支的名次投票就发生在这一段等待里, 所以它同时是投票窗口的长度。 */
 #define COLLECT_IR_TIMEOUT_MS   5000u
@@ -231,7 +231,7 @@ static void collect_slots(void)
                        (unsigned)slot, (unsigned)NX_GetTrophyCount());
             }
 
-
+            osDelay(400);
             if (slot < TROPHY_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
@@ -239,7 +239,7 @@ static void collect_slots(void)
             }
             (void)BlockBasic_GripperClamp(slot);
         }
-        BlockBasic_LiftToAbs(28.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
+        BlockBasic_LiftToAbs(30.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
     }
 }
 

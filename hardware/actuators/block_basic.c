@@ -273,11 +273,11 @@ float BlockBasic_LiftTo(uint8_t dir, float pos)
         uint32_t pulse = (uint32_t)(pos * BLOCK_STEPPER_PULSE_PER_MM);
         if (dir == 0)
         {
-            Emm_V5_Pos_Control(5, 0, 1600, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 0, 2500, 0, pulse, 0, 0);
         }
         else
         {
-            Emm_V5_Pos_Control(5, 1, 1600, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 1, 2500, 0, pulse, 0, 0);
         }
         return 0.0f;
     }
@@ -421,12 +421,12 @@ void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
         if (height!=0)
         {
             BlockBasic_LiftTo(DOWN, height);
-            osDelay(600);
+            osDelay(200);
         }
    /* 松开正在放的这个槽 = 解锁 */
 
         /* 后退 0.05 m (车体 -X 方向) */
-        if (!Mecanum_MoveBodyPos(-0.12f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
+        if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
             printf("[PLACE] 后退没等齐到位 (超时)\r\n");
         }
     }

@@ -7,6 +7,8 @@
 #include "ops9_g491_uart3.h"      /* extern const LocatorDev_t locator_ops9 */
 #include "pose_data.h"            /* PoseData_t */
 #include <math.h>
+
+#include "block_basic.h"
 #include "Send_motor.h"           /* Send_commandmotor (下游执行器) */
 
 /* ==================================================================
@@ -487,7 +489,7 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
         printf("[NAV-ARC] 参数非法 R=%.3f A=%.3f, 不动作\r\n", R, sweep);
         return;
     }
-
+    BlockBasic_LiftToAbs(0);
     /* 1. 借走电机控制权 (与 Nav_GoToWorld 同契约, 退出不恢复角度环) */
     g_angle_ctrl_enable = 0;
     osDelay(20);

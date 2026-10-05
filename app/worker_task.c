@@ -180,7 +180,7 @@ static const Jang_type NF_RANK[NF_RANK_COUNT] = {
  * 摆放阶段已改成反查 g_tt.trophy[] (见 ColorIdentif.c 的 SlotByTrophy)。 */
 
 /** 各奖杯放置时的丝杆高度 (mm)。。 */
-static const uint16_t NF_PLACE_HEIGHT[4] = { 0u, 5u, 5u, 5u };
+static const uint16_t NF_PLACE_HEIGHT[4] = { 0u, 5u, 4u, 3u };
 
 /** 五个槽位里实际放的物块颜色。
  *  ★ NX 接入点: 换成 NX 回传的「收集到的颜色物块」。
@@ -595,8 +595,8 @@ static void NF_Stage_PlaceDown(void)
         }
 
         if (rank == third_place) {
-            BlockBasic_LiftToAbs(5.0f);    /* 季军预下降: 降到 5mm (等价原 DOWN,33: 38-33) */
-            osDelay(1200);
+            BlockBasic_LiftToAbs(6.0f);    /* 季军预下降: 降到 5mm (等价原 DOWN,33: 38-33) */
+            osDelay(1000);
         }
         BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
@@ -619,7 +619,7 @@ static void NF_Stage_PlaceDown(void)
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
-        BlockBasic_LiftToAbs(43.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
+        BlockBasic_LiftToAbs(48.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
         osDelay(1000);
     }
 

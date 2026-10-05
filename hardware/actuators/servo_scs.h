@@ -71,7 +71,7 @@ extern "C" {
 #define STS_SPEED       0    /* 原始寄存器值，单位见 STS3032 数据手册 */
 #define STS_ACC         0      /* 原始寄存器值，0 = 不控加速度直冲最高速 */
 #define SCS_CLOSE     450     /* SCS0009: 0~1024 的中位（0.293°/步，全行程 300°） */
-#define SCS_OPEN      620
+#define SCS_OPEN      670
 #define SCS_SPEED       0    /* 原始寄存器值，0 = 用寄存器内部值 */
 #define SCS_TIME        0       /* 0 = 用寄存器内部值 */
 
