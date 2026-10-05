@@ -213,12 +213,11 @@ typedef struct {
 
 #if 1   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
 static const NF_Stage_t NF_STAGES[] = {
-    {Event_NavCircleL,1},
-    //  { Event_Collect_R, 1u },
-    // { Event_Navigation, 1u },
-    //  { Event_PlaceDown, 3u },
-    // { Event_Collect_L,   1u },
-    // { Event_FindCircle,  5u },
+      { Event_Collect_R, 1u },
+     // { Event_Navigation, 4u },
+      { Event_PlaceDown, 3u },
+     {Event_Collect_L,  1u },
+    { Event_FindCircle,  5u },
 };
 
 #endif
@@ -404,7 +403,7 @@ static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
  *  g_waypoints[] 注释编号一致): 1~3 奖杯点 + 7~11 物料点 e/c/d/a/b, 共 8 个。
  *  ★ 只改这张表就换点位。 */
 static const uint8_t NF_CREEP_WP[] = {
-    1u, 2u, 3u, 7u, 8u, 9u, 10u, 11u,
+    1u, 2u, 3u,
 };
 
 /** @brief 点号是否在"要蹭"的表里。 */
@@ -474,7 +473,7 @@ static void NF_Stage_Navigation(void)
     }
 
     NAV_count++;
-    uint8_t need = (cur_stage == COLLECT_TROPHY) ? 3u : 5u;
+    uint8_t need = (cur_stage == COLLECT_TROPHY) ? 4u : 1u;
     if (NAV_count == need)
     {
         printf("[FLOW] %s collected\r\n",(cur_stage == COLLECT_TROPHY) ? "trophy" : "block");
@@ -519,20 +518,23 @@ static void NF_Stage_Collect(BlockCollectStage_t stage)
            (stage == COLLECT_TROPHY) ? "奖杯" : "物料");
     NAV_count=0;
     cur_stage = stage;
+    BlockCollect_SetStage(stage);
     if (stage==COLLECT_TROPHY)
     {
         NX_RequestMode(NX_MODE_YOLO);
+       NLF_Request(Event_Navigation);
     }
     else
     {
         NX_RequestMode(NX_MODE_CIRCLE);
+        NLF_Request(Event_NavCircleL);
     }
     NX_ApplyMode();
-    BlockCollect_SetStage(stage);
+
     BlockCollect_Reset();
     BlockCollect_Start();            /* 只置请求; gripper_task 下一拍开始跑 */
 
-    NLF_Request(Event_Navigation);   /* 立刻进导航, 采集并行 */
+    // NLF_Request(Event_Navigation);   /* 立刻进导航, 采集并行 */
 }
 
 
@@ -706,10 +708,10 @@ void NLF_RunFlow(SystemMode_t mode)
 
         case Event_NavCircleL:
             /* 跑一段定半径圆弧  */
-            Nav_Cricle(Nav_CricleL ,  0.93, 180*NAV_DEG2RAD );
+            Nav_Cricle(Nav_CricleL ,  0.93f, 170*NAV_DEG2RAD );
             break;
         case Event_NavCircleR:
-            Nav_Cricle(Nav_CricleR , 0.93 ,180*NAV_DEG2RAD );
+            Nav_Cricle(Nav_CricleR , 0.93f ,170*NAV_DEG2RAD );
             break;
         case Event_START:
             NF_Start();

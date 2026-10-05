@@ -85,7 +85,7 @@ extern volatile uint8_t g_nav_running;
 #define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
 #endif
 #define NAV_KP_X_LIN    6.3f
-#define NAV_KP_Y_LIN    6.3f
+#define NAV_KP_Y_LIN    6.0f
 #define NAV_KD_X_LIN    0.1f
 #define NAV_KD_Y_LIN    0.1f
 #define NAV_BRK_X       0.75f
