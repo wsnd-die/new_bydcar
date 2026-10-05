@@ -412,7 +412,7 @@ void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
     {
 
         float fwd  = 0.068f - y * PLACE_CIRCLE_SCALE_M;
-        float left = -x * PLACE_CIRCLE_SCALE_M;
+        float left = x * PLACE_CIRCLE_SCALE_M;
 
         BlockBasic_GripperRelease(slot);
         if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
@@ -421,7 +421,7 @@ void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
         if (height!=0)
         {
             BlockBasic_LiftTo(DOWN, height);
-            osDelay(600);
+            osDelay(100);
         }
    /* 松开正在放的这个槽 = 解锁 */
 
