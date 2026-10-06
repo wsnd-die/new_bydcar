@@ -47,6 +47,16 @@ typedef enum
  */
 #define MSP_COLOR_TIMEOUT_MS   300u
 
+/**
+ * 颜色投票窗口, 单位 ms (MSP_Color_Vote 用)。★实测调整。
+ *
+ * @note 窗口内收到的帧**全部计入票**, 最后取多数 —— 比"只认一帧"稳。
+ *       现场看日志里 `[MSP] color='x'` 那几行: 一个槽打了几行就是几票。
+ *       **窗口里至少要有 3 票**才谈得上"多数", 不够就把这个数往上加;
+ *       加太长会拖慢采集 (每槽多等这么久)。
+ */
+#define MSP_COLOR_VOTE_MS      600u
+
 /** ISR 侧: 由 Core/Src/usart.c 的 HAL_UARTEx_RxEventCallback() 分发器调用。 */
 void msp_color_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);
 
@@ -61,6 +71,21 @@ void MSP_Color_Init(void);
  * @note   进入时会先丢掉上一次的残留帧 —— 取色只在夹紧后调, 旧帧不该算数。
  */
 bool MSP_Color_Wait(Color_TypeDef *out, uint32_t timeout_ms);
+
+/**
+ * @brief  在一个窗口内**累计**颜色帧并取多数 (与奖杯名次投票同思路)。
+ * @param  window_ms  投票窗口长度, 见 MSP_COLOR_VOTE_MS。
+ * @param  out        非空时写入票多的 COLOR_RED / COLOR_BLUE。
+ * @retval true   至少有一票, *out 有效。
+ * @retval false  窗口内一票都没有 (没收到 'r'/'b'), *out 不动 → 调用方走兜底表。
+ *
+ * @note   与 MSP_Color_Wait() 的取舍**相反**: **不预先丢残留帧**。
+ *         调用点是在转盘已停在槽 N、物块也进来了之后, 此刻手上那帧就是本槽的;
+ *         丢掉它反而要再等一个周期 —— 原来 300ms 窗口下"四个槽随机挂两个"
+ *         就是从这儿来的。投票本身也要求把窗口内收到的全算进来。
+ * @note   平票时取先遍历到的 (RED 优先), 用 `>` 而不是 `>=`。
+ */
+bool MSP_Color_Vote(uint32_t window_ms, Color_TypeDef *out);
 
 /** 非阻塞取一帧。无新帧返回 false。取到时打印一行 [MSP] 便于调试。 */
 bool MSP_Color_Take(Color_TypeDef *out);

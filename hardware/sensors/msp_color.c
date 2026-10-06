@@ -173,6 +173,45 @@ bool MSP_Color_Wait(Color_TypeDef *out, uint32_t timeout_ms)
     }
 }
 
+bool MSP_Color_Vote(uint32_t window_ms, Color_TypeDef *out)
+{
+    uint32_t t0 = HAL_GetTick();
+    uint16_t votes[COLOR_COUNT] = { 0u };    /* 只用 [COLOR_RED] / [COLOR_BLUE] */
+    Color_TypeDef c;
+
+    for (;;) {
+        while (MSP_Color_Take(&c)) {         /* 把手上的帧全取完再睡 */
+            if (c < COLOR_COUNT) {
+                votes[c]++;
+            }
+        }
+        if ((HAL_GetTick() - t0) >= window_ms) {
+            break;
+        }
+        osDelay(10);
+    }
+
+    /* 取多数: 严格大于 → 同票时取先遍历到的 (COLOR_RED) */
+    Color_TypeDef best = COLOR_UNKNOWN;
+    for (Color_TypeDef i = COLOR_RED; i < COLOR_COUNT; i++) {
+        if (votes[i] > votes[best]) {
+            best = i;
+        }
+    }
+
+    printf("[MSP] color votes: r=%u b=%u -> %s\r\n",
+           (unsigned)votes[COLOR_RED], (unsigned)votes[COLOR_BLUE],
+           (best == COLOR_UNKNOWN) ? "none" : Color_ToString(best));
+
+    if (best == COLOR_UNKNOWN) {
+        return false;
+    }
+    if (out) {
+        *out = best;
+    }
+    return true;
+}
+
 bool MSP_Color_DebugPoll(void)
 {
     if (!s_msp.frame_ready) {

@@ -160,7 +160,7 @@ int BlockBasic_GripperRaw(uint8_t slot)
  *       写在头文件里会被每个包含它的 .c 各生成一份, 链接期 multiple definition。 */
 #define SLOT_SHAPE_FIRST   2u          /* 表覆盖的物理槽起点 (>0 是因为槽 1 是黄锥, 判它没意义) */
 #define SLOT_SHAPE_COUNT   4u
-static const int Slot_Shape[SLOT_SHAPE_COUNT] = { 460, 462, 472, 468 };
+static const int Slot_Shape[SLOT_SHAPE_COUNT] = { 640, 641, 637, 641 };
 
 _Static_assert(SLOT_SHAPE_FIRST + SLOT_SHAPE_COUNT - 1u <= BLOCK_TURNTABLE_POS_COUNT,
                "形状阈值表越过了转盘槽位上限");
@@ -172,7 +172,7 @@ BlockShape_t BlockBasic_ShapeFromRaw(int raw_angle, uint8_t slot)
         slot >= SLOT_SHAPE_FIRST + SLOT_SHAPE_COUNT) {
         return SHAPE_UNKNOWN;   /* 读失败 / 槽号不在表内, 都不能猜 */
     }
-    return (raw_angle >= Slot_Shape[slot - SLOT_SHAPE_FIRST])
+    return (raw_angle > Slot_Shape[slot - SLOT_SHAPE_FIRST])
            ? SHAPE_RECT : SHAPE_CYLINDER;
 }
 

@@ -163,10 +163,13 @@ static void identify_slot(uint8_t slot)
     int          raw   = BlockBasic_GripperRaw(slot);
     BlockShape_t shape = BlockBasic_ShapeFromRaw(raw, slot);
 
+    /* 颜色改为**窗口内投票** (V1.26.7): 转盘早就停在槽 N, 物块进来之后
+     * 传感器一直在报, 所以把 MSP_COLOR_VOTE_MS 里收到的帧全数一遍取多数,
+     * 比原来"丢掉残留再看下一帧"稳 —— 那正是"四个槽随机挂两个"的来源。 */
     Color_TypeDef c;
-    if (!MSP_Color_Wait(&c, MSP_COLOR_TIMEOUT_MS)) {
+    if (!MSP_Color_Vote(MSP_COLOR_VOTE_MS, &c)) {
         c = collect_default_color(slot);
-        printf("[COLLECT] slot %u: color timeout -> default\r\n", (unsigned)slot);
+        printf("[COLLECT] slot %u: color 一票没有 -> default\r\n", (unsigned)slot);
     }
 
     /* 形状唯一的"读不出来"就是 raw < 0 (舵机总线失败) 或槽号不在表内,
@@ -241,6 +244,7 @@ static void collect_slots(void)
     TT_Init();
     if (s_stage == COLLECT_BLOCK)
     {
+        (void)BlockBasic_TurntableTo(CONE_SLOT);
         printf("[COLLECT] waiting cone\r\n");
         if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
             printf("[COLLECT] no cone, abort\r\n");
