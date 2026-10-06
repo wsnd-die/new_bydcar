@@ -258,7 +258,6 @@ static void NF_FlowSeed(void)
         TT_SetShape(s, NF_SLOT_SHAP[s]);
     }
 
-
     /* --- 流程进度复位 --- */
     s_stage_idx   = 0u;
     s_stage_left  = NF_STAGES[0].times;
@@ -418,20 +417,7 @@ static bool NF_NeedCreep(uint8_t wp)
     return false;
 }
 
-/**
- * @brief 向前低速蹭, 直到物块**完全进入**进料口 / 到达距离上限 / 超时。
- *
- * @note "完全进入"的判据与 collect_ir.c 的 `IR_ObjectEntered()` **一致**
- *       (上一拍遮光 → 这一拍恢复), 但**必须用本函数自己的边沿状态**:
- *       collect_ir 里那个 static 归 gripper_task 的 wait_block_entered() 专用,
- *       两边共用一个状态会让彼此的判据都错乱 —— 所以这里只读纯电平的
- *       `IR_ObjectPresent()`, 自己判边沿。
- * @note 结束时**消费掉 `g_route_abort`** —— 蹭的过程中物块进来, 采集侧会
- *       `Route_AbortRequest()`; 而这一段导航早就结束了, 不消化掉的话
- *       **下一段导航刚进去就被"打断", 直接跳过下一个点位**。
- * @note 车体系前行(`Mecanum_Calc_Full_V(v,0,0)`), 不依赖 OPS9 —— 就是它把车
- *       停在了物块前面, 不能再靠它。
- */
+
 static void NF_CreepForward(void)
 {
     uint32_t t0      = osKernelGetTickCount();
@@ -467,7 +453,6 @@ static void NF_CreepForward(void)
 static void NF_Stage_Navigation(void)
 {
     bool arrived = NF_RouteStep();
-
 
     if (arrived && !Nav_LastAborted() && NF_NeedCreep(Nav_LastWaypointNo())) {
         NF_CreepForward();
@@ -523,17 +508,26 @@ static void NF_Stage_Collect(BlockCollectStage_t stage)
     if (stage==COLLECT_TROPHY)
     {
         NX_RequestMode(NX_MODE_YOLO);
-       NLF_Request(Event_Collect_L);
+       NLF_Request(Event_Navigation);
     }
     else
     {
         NX_RequestMode(NX_MODE_CIRCLE);
-        NLF_Request(Event_Collect_L);
+        NLF_Request(Event_NavCircleL);
     }
     NX_ApplyMode();
 
     BlockCollect_Reset();
     BlockCollect_Start();            /* 只置请求; gripper_task 下一拍开始跑 */
+
+    /* 物料摆放的"找块"游标必须**每轮**复位 (V1.26.5)。
+     * 原来只在 NF_FlowSeed() 里调一次, 而它被 s_flow_seeded 门闩成"每次上电
+     * 只跑一次" —— 第二次按键开跑时游标还停在上轮末尾, TT_SeekBlock() 直接
+     * 返回 0, 整轮 FindCircle 全部"找不到", 一件都放不出去;
+     * 若上轮只走了一半, 游标从中间接着走 → **圆锥那一格被跳过**。 */
+    if (stage == COLLECT_BLOCK) {
+        TT_RotateReset();
+    }
 
     // NLF_Request(Event_Navigation);   /* 立刻进导航, 采集并行 */
 }
@@ -559,11 +553,12 @@ static void NF_Stage_FindCircle(void)
         osDelay(10);
     }
 
-    while (TT_RotateByQR()) {
-        /* 每次调用推进一格 */
+    if (TT_RotateByQR()) {
+        printf("[FLOW] FindCircle -> 转盘物理槽 %u\r\n", (unsigned)TT_CurrentSlot());
+        Place('O', g_circle_avg_x, g_circle_avg_y, 0u, TT_CurrentSlot());
+    } else {
+        printf("[FLOW] FindCircle: 该 (颜色,形状) 在 g_tt 里找不到或已放完, 跳过\r\n");
     }
-
-    Place('O', g_circle_avg_x, g_circle_avg_y, 0u, TT_CurrentSlot());   /* 物料: 松开刚转到门口那个槽 */
 
     g_circle_dir = ' ';         /* 清残留, 让下一次找圆重新判定 */
     //TT_RotateReset();
@@ -666,6 +661,7 @@ static void NF_Stage_GoHome(void)
 
     if (g_waypoint_count > 0u) {
         const World_Dir_t *home = &g_waypoints[g_waypoint_count - 1u];
+        Servo_SetAngle(129);
         (void)Nav_GoToWorld(home->x, home->y, home->yaw);
     }
     AG_Stop();

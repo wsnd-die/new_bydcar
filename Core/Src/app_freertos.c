@@ -331,11 +331,14 @@ void gripper_task(void *argument)
   BlockBasic_LiftSync(0.0f);      /* 压限位归零 → 软件高度同步成 0 (之后用绝对高度指令) */
   printf("[scs] init SUCSESS: huart5 initialized\r\n");
   BlockBasic_TurntableTo(1);
-  Servo_SetAngle(127);
+  Servo_SetAngle(129);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
+    // BlockBasic_TurntableTo(SERVO_ID_SCS0009_MAX-id);
+    // osDelay(100);
   }
   // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
+
   BlockBasic_LiftToAbs(5.0f);     /* 夹爪初始化抬到 3mm (等价原 UP,3) */
   printf("[scs] gripper init done\r\n");
   for (;;)
@@ -421,18 +424,18 @@ void KEY_TASK(void *argument)
 {
   /* USER CODE BEGIN KEY_TASK */
 uint8_t key_StartOK=0;
-
+  Color_TypeDef test;
   for(;;)
   {
     Key_Update();
-
+    // MSP_Color_Take(&test);
     /* 用 Key_WasPressed (边沿, 读后清) 而不是 Key_IsPressed (电平):
      * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
     if (Key_WasReleased(KEY_START) && !BlockCollect_IsRunning() && !key_StartOK)
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
-      NLF_Request(Event_Collect_L);
-      //NLF_Request(Event_STARTSecnd);
+      // NLF_Request(Event_Collect_L);
+      NLF_Request(Event_START);
       Servo_SetAngle(40);
       key_StartOK=1;
     }

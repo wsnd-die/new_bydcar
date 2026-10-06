@@ -62,7 +62,7 @@ void Circle_Follow(void)
     {
         float dist = sqrtf(cx*cx + cy*cy);
         g_circle_speed = (dist > CIRCLE_XY_FAST_TH) ? CIRCLE_XY_V_FAST : CIRCLE_XY_V_SLOW;
-        printf("%f\r\n",dist);
+        // printf("%f\r\n",dist);
     }
 
 

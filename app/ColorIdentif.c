@@ -31,8 +31,6 @@ static uint8_t T1[4][2]=
     {COLOR_BLUE,SHAPE_CYLINDER},
     {COLOR_RED,SHAPE_RECT},
     {COLOR_RED,SHAPE_CYLINDER},
-
-
 };
 
 /* ============================================================
@@ -45,11 +43,6 @@ void TT_Init(void)
     for (uint8_t i = 0; i < COLOR_COUNT; i++)
         g_tt.rev[i] = SLOT_NONE;
 }
-
-/* ============================================================
- * SetQR — 核心: QR 序号 → 解析槽位映射
- * ============================================================ */
-
 
 /* ============================================================
  * TT_SetColor — 存检测到的颜色到槽位
@@ -174,10 +167,11 @@ uint8_t TT_SeekBlock() {
         return 0;
     }
 
-    for (uint8_t i = 2; i <= 5; i++) {
-        if (g_tt.color[i]==T1[s_seek_slot-1][0] && g_tt.shape[i]==T1[s_seek_slot-1][1]) {
+
+    for (uint8_t s = 1u; s <= 4u; s++) {
+        if (g_tt.color[s]==T1[s_seek_slot-1][0] && g_tt.shape[s]==T1[s_seek_slot-1][1]) {
             s_seek_slot++;
-            return i;
+            return (uint8_t)(s + 1u);   /* 下标 → 物理槽 */
         }
     }
     return 0;

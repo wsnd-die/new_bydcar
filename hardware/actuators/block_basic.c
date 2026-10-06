@@ -368,10 +368,7 @@ void Servo_Angle(float angle_deg)
     angle_servo = normalize_servo(angle_deg);
     turntable_write_angle(angle_servo);
 }
-/*
- *
- *
- */
+
 static float Now_Angle=127;
 #define ANGLE_STEP     30.0f
 #define CostTime      1.0f

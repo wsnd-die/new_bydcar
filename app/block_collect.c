@@ -86,9 +86,6 @@ static bool wait_block_entered(uint32_t timeout_ms, uint8_t *rank_out)
 
     if (rank_out) {
         *rank_out = 0u;
-        /* 丢掉上一轮的残留帧。⚠ 原来这里是**静默**吞帧的 —— 上一槽夹紧/转盘
-         * 那 400~600ms 空档里收到的帧会攒在这里被吃掉, 完全看不出来。
-         * 现在真丢了就打一行, 用来确认"槽2 恒 0 票"是不是这么丢的。 */
         if (NX_GetTrophyRank(&r)) {
             printf("[COLLECT] (开窗丢残留帧 '%c')\r\n", r);
         }
@@ -103,12 +100,7 @@ static bool wait_block_entered(uint32_t timeout_ms, uint8_t *rank_out)
         }
 
         if (IR_ObjectEntered()) {
-            /* V1.23.0: 物块一进料口 → 打断当前路线段, 立刻改奔下一个点。
-             * 这是"采集推进导航"的唯一通道 (见 worker_task.h 的 g_route_abort)。
-             * ⚠ 这里**刻意不加 printf** —— 本函数跑在 gripper_task 里, 那个任务
-             *   只有 1KB 栈且 configCHECK_FOR_STACK_OVERFLOW 未定义, 一次
-             *   printf 就能吃掉几百字节, 溢出**没有任何提示**。
-             *   打断的日志打在 NLF_TASK 侧 (Nav_FeDuanPoint 里)。 */
+
             Route_AbortRequest();
 
             if (rank_out) {
@@ -142,6 +134,24 @@ static Color_TypeDef collect_default_color(uint8_t slot)
 }
 
 /**
+ * @brief 形状读不出来时的兜底 (与 collect_default_color 同款)。
+ *
+ * 与上面那张颜色表**配对**用, 保证 4 个 `(颜色, 形状)` 恰好铺满 `T1[]`:
+ *
+ *     槽2 红+方    槽3 红+圆     (collect_default_color: 槽<=3 → 红)
+ *     槽4 蓝+方    槽5 蓝+圆     (collect_default_color: 槽>3  → 蓝)
+ *
+ * @note 哪个槽配方/圆**不影响能不能找到** —— `TT_SeekBlock()` 是按
+ *       `(颜色, 形状)` 的值去搜槽的, 只要四个组合齐全就行。它只决定
+ *       "方/圆分别摆到哪个点位"(即 `T1[]` 里的先后)。
+ * @note ★ 占位值, NX 接入后换成回传值。
+ */
+static BlockShape_t collect_default_shape(uint8_t slot)
+{
+    return (slot == 2u || slot == 4u) ? SHAPE_RECT : SHAPE_CYLINDER;
+}
+
+/**
  * @brief 读一颗已经夹住的物块 (形状 + 颜色), 存进 g_tt。
  * @param slot  物理槽号 2~5。调用时该槽必须**已经夹紧**、且转盘已经把它
  *              转到颜色传感器前面并停稳。
@@ -159,6 +169,13 @@ static void identify_slot(uint8_t slot)
         printf("[COLLECT] slot %u: color timeout -> default\r\n", (unsigned)slot);
     }
 
+    /* 形状唯一的"读不出来"就是 raw < 0 (舵机总线失败) 或槽号不在表内,
+     * 那时 ShapeFromRaw 返回 SHAPE_UNKNOWN —— 与颜色超时同一个位置兜底。 */
+    if (shape == SHAPE_UNKNOWN) {
+        shape = collect_default_shape(slot);
+        printf("[COLLECT] slot %u: shape unknown -> default\r\n", (unsigned)slot);
+    }
+
     TT_SetColor(s, c);
     TT_SetShape(s, (uint8_t)shape);
     TT_SetRawAngle(s, (int16_t)raw);
@@ -166,6 +183,47 @@ static void identify_slot(uint8_t slot)
 
     printf("[COLLECT] slot=%u raw=%d shape=%u color=%u\r\n",
            (unsigned)slot, raw, (unsigned)shape, (unsigned)c);
+}
+
+/* ================================================================
+ * 奖杯名次排除法 (V1.26.4)
+ *
+ * 3 个奖杯的名次是 {1 冠军, 2 亚军, 3 季军} 的一个**排列** —— 互不重复。
+ * 所以 g_tt.trophy[] 里**恰好只有一个 0** 时, 那个槽必是剩下的名次。
+ *
+ * 存在的理由: 视觉投票可能一票都没有 (NX 没回 / 帧落在窗口外), 该槽就留 0
+ * → SlotByTrophy() 返回 SLOT_NONE → PlaceDown 把那个名次的奖杯**整件跳过**。
+ *
+ * @note 前提是 3 个奖杯都进了槽。少进一个时采集时序本来就已经乱了
+ *       (那个 continue 会连夹紧和转盘推进一起跳掉), 这里不再单独判。
+ * ================================================================ */
+static void trophy_fill_missing(void)
+{
+    uint8_t miss = 3u;   /* 名次未定的槽下标; 3 = 没有 */
+    uint8_t used = 0u;   /* bit1~3 对应已出现的名次 1~3 */
+
+    for (uint8_t s = 0u; s < 3u; s++) {
+        uint8_t r = g_tt.trophy[s];
+        if (r == 0u) {
+            if (miss != 3u) return;              /* 缺 2 个以上 → 推不出来 */
+            miss = s;
+        } else if (used & (uint8_t)(1u << r)) {
+            return;                              /* 名次重复 → 视觉给错, 不补 */
+        } else {
+            used |= (uint8_t)(1u << r);
+        }
+    }
+    if (miss == 3u) return;                      /* 三个都识别出来了 */
+
+    for (uint8_t r = 1u; r <= 3u; r++) {
+        if (!(used & (uint8_t)(1u << r))) {
+            TT_SetTrophy(miss, r);
+            printf("[COLLECT] 排除法: 槽%u 名次未定 -> 补为 %u (%s)\r\n",
+                   (unsigned)(miss + 1u), (unsigned)r,
+                   (r == 1u) ? "冠军" : (r == 2u) ? "亚军" : "季军");
+            return;
+        }
+    }
 }
 
 /**
@@ -239,6 +297,10 @@ static void collect_slots(void)
             }
             (void)BlockBasic_GripperClamp(slot);
         }
+
+        /* 三个槽都过完了, 现在才谈得上"缺哪一个" */
+        trophy_fill_missing();
+
         BlockBasic_LiftToAbs(30.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
     }
 }
