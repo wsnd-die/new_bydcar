@@ -187,9 +187,11 @@ static const uint16_t NF_PLACE_HEIGHT[4] = { 0u, 5u, 4u, 3u };
  *  @note 旧流程这里由 BsRt_task + 颜色传感器**本地读色**填入; 按用户决定
  *        (2026-09-28) 下位机不再读色, 改由 NX 回传, 故现在写死。 */
 static const Color_TypeDef NF_SLOT_COLORS[NF_TASK1_SLOT_COUNT] = {
-    COLOR_RED, COLOR_GREEN, COLOR_BLUE, COLOR_WHITE, COLOR_BLACK,
+    COLOR_BLUE,COLOR_BLUE ,COLOR_RED,COLOR_RED,
 };
-
+static const  BlockShape_t NF_SLOT_SHAP[NF_TASK1_SLOT_COUNT] = {
+    SHAPE_CYLINDER, SHAPE_RECT,SHAPE_CYLINDER,SHAPE_RECT,
+};
 /** 物块任务的槽位映射图案号 (0~15), 即旧 QR 左码解出的序号。
  *  ★ NX 接入点: 换成 NX 回传的映射序号。 */
 #define NF_TASK1_QR_IDX     0u
@@ -251,8 +253,9 @@ static void NF_FlowSeed(void)
     s_flow_seeded = true;
 
     TT_Init();
-    for (uint8_t s = 0; s < NF_TASK1_SLOT_COUNT; s++) {
+    for (uint8_t s = 0; s < NF_TASK1_SLOT_COUNT-1; s++) {
         TT_SetColor(s, NF_SLOT_COLORS[s]);
+        TT_SetShape(s, NF_SLOT_SHAP[s]);
     }
 
 
@@ -512,20 +515,20 @@ static void NF_Stage_Navigation(void)
  */
 static void NF_Stage_Collect(BlockCollectStage_t stage)
 {
-    printf("[FLOW] Collect: 挂请求 (%s), 不等\r\n",
-           (stage == COLLECT_TROPHY) ? "奖杯" : "物料");
+    // printf("[FLOW] Collect: 挂请求 (%s), 不等\r\n",
+    //        (stage == COLLECT_TROPHY) ? "奖杯" : "物料");
     NAV_count=0;
     cur_stage = stage;
     BlockCollect_SetStage(stage);
     if (stage==COLLECT_TROPHY)
     {
         NX_RequestMode(NX_MODE_YOLO);
-       NLF_Request(Event_Navigation);
+       NLF_Request(Event_Collect_L);
     }
     else
     {
         NX_RequestMode(NX_MODE_CIRCLE);
-        NLF_Request(Event_NavCircleL);
+        NLF_Request(Event_Collect_L);
     }
     NX_ApplyMode();
 

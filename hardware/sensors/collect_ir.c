@@ -45,7 +45,7 @@ bool IR_ObjectEntered(void)
 
     /* 防抖 */
     if (fully_in) {
-        osDelay(30);
+        osDelay(20);
         now = IR_ObjectPresent();
         if (now) {
             ir_last = now;

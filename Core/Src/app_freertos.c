@@ -431,7 +431,7 @@ uint8_t key_StartOK=0;
     if (Key_WasReleased(KEY_START) && !BlockCollect_IsRunning() && !key_StartOK)
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
-      NLF_Request(Event_START);
+      NLF_Request(Event_Collect_L);
       //NLF_Request(Event_STARTSecnd);
       Servo_SetAngle(40);
       key_StartOK=1;
