@@ -549,7 +549,7 @@ static void NF_Stage_FindCircle(void)
             printf("[FLOW] FindCircle 超时 (%ums), 放弃本拍\r\n",
                    (unsigned)NF_CIRCLE_TIMEOUT_MS);
             AG_Stop();
-            NLF_Request(Event_FindCircle);
+            NLF_Request(Event_Navigation);
             return;
         }
         osDelay(10);
@@ -567,7 +567,7 @@ static void NF_Stage_FindCircle(void)
     //Wheel_Odom_Reset();
 
     //NLF_Request(Event_Navigation);
-    NLF_Request(Event_FindCircle);
+    NLF_Request(Event_Navigation);
 }
 
 
@@ -614,7 +614,7 @@ static void NF_Stage_PlaceDown(void)
     }
 
     /* 3) 放置 + 收尾 */
-    Place('O', g_circle_avg_x, g_circle_avg_y, NF_PLACE_HEIGHT[(uint8_t)rank], tslot);   /* 奖杯: 松开该奖杯所在的槽 */
+    Place('O', g_circle_avg_x,g_circle_avg_y , NF_PLACE_HEIGHT[(uint8_t)rank], tslot);   /* 奖杯: 松开该奖杯所在的槽 */
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {

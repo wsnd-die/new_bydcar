@@ -397,7 +397,7 @@ void Servo_SetAngle(float Angle)
 
 }
 /* K230 圆心像素 → 车体横向位移 (m/像素)。比例/方向需实测调, 反了取负 */
-#define PLACE_CIRCLE_SCALE_M  0.005f
+#define PLACE_CIRCLE_SCALE_M  0.001f
 
 /** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
@@ -408,7 +408,7 @@ void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
     if (dir == 'O')
     {
 
-        float fwd  = 0.068f - y * PLACE_CIRCLE_SCALE_M;
+        float fwd  = 0.070f - y * PLACE_CIRCLE_SCALE_M;
         float left =  x * PLACE_CIRCLE_SCALE_M;
 
         BlockBasic_GripperRelease(slot);
