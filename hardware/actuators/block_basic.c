@@ -397,7 +397,7 @@ void Servo_SetAngle(float Angle)
 
 }
 /* K230 圆心像素 → 车体横向位移 (m/像素)。比例/方向需实测调, 反了取负 */
-#define PLACE_CIRCLE_SCALE_M  0.001f
+#define PLACE_CIRCLE_SCALE_M  0.005f
 
 /** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */

@@ -548,7 +548,7 @@ static void NF_Stage_FindCircle(void)
             printf("[FLOW] FindCircle 超时 (%ums), 放弃本拍\r\n",
                    (unsigned)NF_CIRCLE_TIMEOUT_MS);
             AG_Stop();
-            NLF_Request(Event_Navigation);
+            NLF_Request(Event_FindCircle);
             return;
         }
         osDelay(10);
@@ -565,7 +565,8 @@ static void NF_Stage_FindCircle(void)
     //TT_RotateReset();
     //Wheel_Odom_Reset();
 
-    NLF_Request(Event_Navigation);
+    //NLF_Request(Event_Navigation);
+    NLF_Request(Event_FindCircle);
 }
 
 

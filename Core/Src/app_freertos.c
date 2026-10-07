@@ -438,7 +438,7 @@ uint8_t key_StartOK=0;
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
       // NLF_Request(Event_Collect_L);
-      NLF_Request(Event_START);
+      NLF_Request(Event_FindCircle);
       Servo_SetAngle(40);
       key_StartOK=1;
     }

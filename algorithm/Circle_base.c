@@ -18,8 +18,8 @@ float g_circle_speed = 1.0f;  /* 速度系数: 1.0=快(左侧), 0.4=慢(右侧) 
 
 /* 按 xy 圆心偏差分档调速: 远(>20px)快速接近, 近(≤20px)慢速微调 */
 #define CIRCLE_XY_FAST_TH   10.0f   /* 偏差阈值 (像素) */
-#define CIRCLE_XY_V_FAST    0.03f   /* 远距离速度 (m/s) */
-#define CIRCLE_XY_V_SLOW    0.01f   /* 近距离速度 (m/s) */
+#define CIRCLE_XY_V_FAST    0.001f   /* 远距离速度 (m/s) */
+#define CIRCLE_XY_V_SLOW    0.0004f   /* 近距离速度 (m/s) */
 
 /* 找圆稳定: 连续 'O' 确认次数, 达到才认为已居中, 防止方向抖动误判/一直动 */
 #define CIRCLE_O_STABLE_CNT  3U
@@ -95,10 +95,10 @@ void Circle_Follow(void)
         g_circle_vy= 0;
     }
 
-        g_circle_vx=-cy*g_circle_speed;
-        g_circle_vy= -cx*g_circle_speed;
+        g_circle_vx=cy*g_circle_speed;
+        g_circle_vy= cx*g_circle_speed;
 
-
+    printf("cy:%.2f,cx:%.2f,vx:%.2f, vy:%.2f\n", cx,cy,g_circle_vx, g_circle_vy);
 
     /* ---- 2. 方向 → 速度映射 (速度按 xy 距离分档) ---- */
     // switch (dir) {
