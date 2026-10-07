@@ -105,6 +105,19 @@ bool    TT_RotateByQR(void);                     /* 每次转一个槽位, 返�
  *         剩下几个一起掉下去, 所以必须知道"当前是哪个槽在门口"。 */
 uint8_t TT_CurrentSlot(void);
 void    TT_RotateReset(void);                    /* 重置旋转进度 */
+
+/**
+ * @brief  T1[] 要的四个 `(颜色,形状)` 组合, 是不是每个都能在**已采集**的槽里找到。
+ * @retval true   四个组合齐全 —— 摆放阶段四行都能搜到槽, 四个物块都放得出去。
+ * @retval false  有组合无人匹配 —— 对应那一轮的 FindCircle 会"找不到"、跳过。
+ *
+ * @note   **这是摆放的前提条件, 不是诊断**: `TT_SeekBlock()` 是按组合逐个搜槽的,
+ *         两行若落在同一个槽上, 另一行就永远空手。识别不可信时 (形状阈值表未标定
+ *         → 恒判 `SHAPE_RECT`, 见 `block_basic.c` 的 `Slot_Shape[]`) 必然凑不齐。
+ *         采集侧拿到 `false` 时应把已采集的槽整批改写成默认表
+ *         —— 见 `app/block_collect.c` 的 `block_fill_defaults()`。
+ */
+bool    TT_BlocksCoverTable(void);
 bool    TT_IsDone(void);                         /* 检查是否全部转完 */
 void TogetPos(uint8_t slot, float *x, float *y, float *yaw);  /* 取点位坐标 */
 void SetPos(uint8_t slot, float x, float y, float yaw);     /* 标定点位 */

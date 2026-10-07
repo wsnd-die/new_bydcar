@@ -273,11 +273,11 @@ float BlockBasic_LiftTo(uint8_t dir, float pos)
         uint32_t pulse = (uint32_t)(pos * BLOCK_STEPPER_PULSE_PER_MM);
         if (dir == 0)
         {
-            Emm_V5_Pos_Control(5, 0, 2500, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 0, 3000, 0, pulse, 0, 0);
         }
         else
         {
-            Emm_V5_Pos_Control(5, 1, 2500, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 1, 3000, 0, pulse, 0, 0);
         }
         return 0.0f;
     }

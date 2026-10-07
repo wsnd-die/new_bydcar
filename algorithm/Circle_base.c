@@ -17,7 +17,7 @@ char  g_circle_dir = '?';
 float g_circle_speed = 1.0f;  /* 速度系数: 1.0=快(左侧), 0.4=慢(右侧) */
 
 /* 按 xy 圆心偏差分档调速: 远(>20px)快速接近, 近(≤20px)慢速微调 */
-#define CIRCLE_XY_FAST_TH   10.0f   /* 偏差阈值 (像素) */
+#define CIRCLE_XY_FAST_TH   6.0f   /* 偏差阈值 (像素) */
 #define CIRCLE_XY_V_FAST    0.3f   /* 远距离速度 (m/s) */
 #define CIRCLE_XY_V_SLOW    0.015f   /* 近距离速度 (m/s) */
 

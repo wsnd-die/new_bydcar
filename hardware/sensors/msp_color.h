@@ -45,7 +45,7 @@ typedef enum
  * 单次取色的等待上限, 单位 ms。★实测调整。
  * 等的是「串口有没有回一帧」, 与颜色识别准不准无关。
  */
-#define MSP_COLOR_TIMEOUT_MS   300u
+#define MSP_COLOR_TIMEOUT_MS   400u
 
 /**
  * 颜色投票窗口, 单位 ms (MSP_Color_Vote 用)。★实测调整。
@@ -55,7 +55,7 @@ typedef enum
  *       **窗口里至少要有 3 票**才谈得上"多数", 不够就把这个数往上加;
  *       加太长会拖慢采集 (每槽多等这么久)。
  */
-#define MSP_COLOR_VOTE_MS      600u
+#define MSP_COLOR_VOTE_MS      400u
 
 /** ISR 侧: 由 Core/Src/usart.c 的 HAL_UARTEx_RxEventCallback() 分发器调用。 */
 void msp_color_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);

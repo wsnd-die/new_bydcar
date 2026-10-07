@@ -144,9 +144,9 @@ bool MSP_Color_Take(Color_TypeDef *out)
     s_msp.pending = 0u;
 
     Color_TypeDef c = MSP_CharToColor(ch);
-    if (c == COLOR_UNKNOWN) {
-        return false;                       /* 收到了但不认识, 当没收到 */
-    }
+    // if (c == COLOR_UNKNOWN) {
+    //     return false;                       /* 收到了但不认识, 当没收到 */
+    // }
 
     printf("[MSP] color='%c' -> %s\r\n", (char)ch, Color_ToString(c));
 
@@ -228,7 +228,7 @@ bool MSP_Color_DebugPoll(void)
         buf[i] = (char)s_msp.digits[i];
     }
     buf[n] = '\0';
-    printf("[MSP-RX] color='%c' rgb_raw=\"%s\"\r\n", (char)s_msp.color, buf);
+    // printf("[MSP-RX] color='%c' rgb_raw=\"%s\"\r\n", (char)s_msp.color, buf);
     return true;
 }
 

@@ -455,6 +455,7 @@ static void NF_Stage_Navigation(void)
     bool arrived = NF_RouteStep();
 
     if (arrived && !Nav_LastAborted() && NF_NeedCreep(Nav_LastWaypointNo())) {
+        osDelay(200);
         NF_CreepForward();
     }
 
@@ -592,7 +593,7 @@ static void NF_Stage_PlaceDown(void)
 
         if (rank == third_place) {
             BlockBasic_LiftToAbs(8.0f);    /* 季军预下降: 降到 5mm (等价原 DOWN,33: 38-33) */
-            osDelay(1000);
+            osDelay(300);
         }
         BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
@@ -616,7 +617,7 @@ static void NF_Stage_PlaceDown(void)
 
     if (rank == second_place) {
         BlockBasic_LiftToAbs(48.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
-        osDelay(1000);
+        osDelay(400);
     }
 
     s_place_idx++;
@@ -661,7 +662,6 @@ static void NF_Stage_GoHome(void)
 
     if (g_waypoint_count > 0u) {
         const World_Dir_t *home = &g_waypoints[g_waypoint_count - 1u];
-        Servo_SetAngle(129);
         (void)Nav_GoToWorld(home->x, home->y, home->yaw);
     }
     AG_Stop();
