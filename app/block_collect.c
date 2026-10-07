@@ -293,7 +293,7 @@ static void collect_slots(void)
     {
         (void)BlockBasic_TurntableTo(CONE_SLOT);
         printf("[COLLECT] waiting cone\r\n");
-        if (!wait_block_entered(2000, NULL)) {   /* NULL = 不投票 */
+        if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
             printf("[COLLECT] no cone, abort\r\n");
         }
 

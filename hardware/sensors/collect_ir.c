@@ -36,7 +36,7 @@ bool IR_ObjectEntered(void)
     bool now = IR_ObjectPresent();
 
     if (now && !ir_last) {
-        osDelay(30);
+        osDelay(10);
         now = IR_ObjectPresent();
         if (!now) return false;
     }
@@ -45,7 +45,7 @@ bool IR_ObjectEntered(void)
 
     /* 防抖 */
     if (fully_in) {
-        osDelay(20);
+        osDelay(10);
         now = IR_ObjectPresent();
         if (now) {
             ir_last = now;
@@ -60,7 +60,7 @@ bool IR_ObjectEntered(void)
 
 bool Collect_WaitEnter(void)
 {
-    while (!IR_ObjectEntered()) { osDelay(10); }
+    while (!IR_ObjectEntered()) { osDelay(8 ); }
     return true;
 }
 

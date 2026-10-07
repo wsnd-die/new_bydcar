@@ -408,8 +408,8 @@ void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
     if (dir == 'O')
     {
 
-        float fwd  = 0.070f - y * PLACE_CIRCLE_SCALE_M;
-        float left =  x * PLACE_CIRCLE_SCALE_M;
+        float fwd  = 0.072f - y * PLACE_CIRCLE_SCALE_M;
+        float left = 0.005f + x * PLACE_CIRCLE_SCALE_M;
 
         BlockBasic_GripperRelease(slot);
         if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {

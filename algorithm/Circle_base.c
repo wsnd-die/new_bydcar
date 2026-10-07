@@ -22,7 +22,7 @@ float g_circle_speed = 1.0f;  /* 速度系数: 1.0=快(左侧), 0.4=慢(右侧) 
 #define CIRCLE_XY_V_SLOW    0.0005f   /* 近距离速度 (m/s) */
 
 /* 找圆稳定: 连续 'O' 确认次数, 达到才认为已居中, 防止方向抖动误判/一直动 */
-#define CIRCLE_O_STABLE_CNT  3U
+#define CIRCLE_O_STABLE_CNT  4U
 static uint8_t s_o_cnt = 0U;
 static float s_sum_x = 0.0f;   /* 确认期间圆心偏差累加 */
 static float s_sum_y = 0.0f;
@@ -38,6 +38,7 @@ float g_circle_avg_y = 0.0f;
 
 void Circle_Follow(void)
 {
+    static uint8_t Dir_flag=0;
     char dir = s_last_dir;   /* 默认保持上次方向 */
     MecanumResult motor;
     float cx = 0.0f, cy = 0.0f;
@@ -71,10 +72,21 @@ void Circle_Follow(void)
      * 确认期间 g_circle_dir 置 ' '(不触发放置), 车保持静止,
      * 避免 'O' 抖动导致车一会停一会动 / 误判提前放置 */
     if (dir == 'O') {
-        s_sum_x += cx;
-        s_sum_y += cy;
+        if (Dir_flag!=0) {
+            s_sum_x += cx;
+            s_sum_y += cy;
+        }
+
+        if (Dir_flag==0) {
+            Dir_flag=1;
+        }
+
         if (s_o_cnt < CIRCLE_O_STABLE_CNT) s_o_cnt++;
         if (s_o_cnt >= CIRCLE_O_STABLE_CNT) {
+            Dir_flag=0;
+            s_o_cnt = 0;
+            s_sum_x = 0.0f;
+            s_sum_y = 0.0f; 
             g_circle_dir = 'O';
             g_circle_avg_x = s_sum_x / (float)CIRCLE_O_STABLE_CNT;   /* 平均偏差 */
             g_circle_avg_y = s_sum_y / (float)CIRCLE_O_STABLE_CNT;
@@ -82,6 +94,7 @@ void Circle_Follow(void)
             g_circle_dir = ' ';
         }
     } else {
+        Dir_flag=0;
         s_o_cnt = 0;
         s_sum_x = 0.0f;
         s_sum_y = 0.0f;
@@ -90,14 +103,15 @@ void Circle_Follow(void)
     /*
   * 串来的坐标为cx为左右，cy为上下，cx<0为左，cy<0为下
   */
-    if (dir == 'O') {
-        g_circle_vx=0;
-        g_circle_vy= 0;
-    }
+
 
         g_circle_vx=cy*g_circle_speed;
         g_circle_vy= cx*g_circle_speed;
 
+    if (dir == 'O') {
+        g_circle_vx=0;
+        g_circle_vy= 0;
+    }
 
     /* ---- 2. 方向 → 速度映射 (速度按 xy 距离分档) ---- */
     // switch (dir) {
