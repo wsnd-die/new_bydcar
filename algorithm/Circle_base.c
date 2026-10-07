@@ -18,8 +18,8 @@ float g_circle_speed = 1.0f;  /* 速度系数: 1.0=快(左侧), 0.4=慢(右侧) 
 
 /* 按 xy 圆心偏差分档调速: 远(>20px)快速接近, 近(≤20px)慢速微调 */
 #define CIRCLE_XY_FAST_TH   10.0f   /* 偏差阈值 (像素) */
-#define CIRCLE_XY_V_FAST    0.3f   /* 远距离速度 (m/s) */
-#define CIRCLE_XY_V_SLOW    0.015f   /* 近距离速度 (m/s) */
+#define CIRCLE_XY_V_FAST    0.03f   /* 远距离速度 (m/s) */
+#define CIRCLE_XY_V_SLOW    0.01f   /* 近距离速度 (m/s) */
 
 /* 找圆稳定: 连续 'O' 确认次数, 达到才认为已居中, 防止方向抖动误判/一直动 */
 #define CIRCLE_O_STABLE_CNT  3U
@@ -66,6 +66,7 @@ void Circle_Follow(void)
     }
 
 
+
     /* ---- 1.5 稳定确认: 连续 N 次 'O' 才确认居中 ----
      * 确认期间 g_circle_dir 置 ' '(不触发放置), 车保持静止,
      * 避免 'O' 抖动导致车一会停一会动 / 误判提前放置 */
@@ -86,42 +87,54 @@ void Circle_Follow(void)
         s_sum_y = 0.0f;
         g_circle_dir = dir;
     }
+    /*
+  * 串来的坐标为cx为左右，cy为上下，cx<0为左，cy<0为下
+  */
+    if (dir == 'O') {
+        g_circle_vx=0;
+        g_circle_vy= 0;
+    }
+
+        g_circle_vx=-cy*g_circle_speed;
+        g_circle_vy= -cx*g_circle_speed;
+
+
 
     /* ---- 2. 方向 → 速度映射 (速度按 xy 距离分档) ---- */
-    switch (dir) {
-    case 'O':
-        g_circle_vx = 0.0f;
-        g_circle_vy = 0.0f;
-        break;
-
-    case 'N':
-        /* 圆心偏上: 前进 */
-        g_circle_vx = g_circle_speed;
-        g_circle_vy = 0.0f;
-        break;
-
-    case 'S':
-        /* 圆心偏下: 后退 */
-        g_circle_vx = -g_circle_speed;
-        g_circle_vy = 0.0f;
-        break;
-
-    case 'W':
-        /* 圆心偏右: 右移 */
-        g_circle_vx = 0.0f;
-        g_circle_vy = g_circle_speed;
-        break;
-
-    case 'E':
-        /* 圆心偏左: 左移 */
-        g_circle_vx = 0.0f;
-        g_circle_vy = -g_circle_speed;
-        break;
-
-    default:
-        /* 未知方向: 停止 */
-        break;
-    }
+    // switch (dir) {
+    // case 'O':
+    //     g_circle_vx = 0.0f;
+    //     g_circle_vy = 0.0f;
+    //     break;
+    //
+    // case 'N':
+    //     /* 圆心偏上: 前进 */
+    //     g_circle_vx = g_circle_speed;
+    //     g_circle_vy = 0.0f;
+    //     break;
+    //
+    // case 'S':
+    //     /* 圆心偏下: 后退 */
+    //     g_circle_vx = -g_circle_speed;
+    //     g_circle_vy = 0.0f;
+    //     break;
+    //
+    // case 'W':
+    //     /* 圆心偏右: 右移 */
+    //     g_circle_vx = 0.0f;
+    //     g_circle_vy = g_circle_speed;
+    //     break;
+    //
+    // case 'E':
+    //     /* 圆心偏左: 左移 */
+    //     g_circle_vx = 0.0f;
+    //     g_circle_vy = -g_circle_speed;
+    //     break;
+    //
+    // default:
+    //     /* 未知方向: 停止 */
+    //     break;
+    // }
 
     /* ---- 3. 全向移动解算 (vx, vy, w=0) ---- */
     motor = Mecanum_Calc_Full_V(g_circle_vx, g_circle_vy, 0.0f);
