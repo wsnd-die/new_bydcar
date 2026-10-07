@@ -58,7 +58,7 @@ uint32_t malu_cm_topluse_s(float cm);
 /** 位置模式速度, 单位 RPM。★实测调。 */
 #define MEC_POS_VEL_RPM   200u
 /** 加减速, 0~255; 0 = 不控加速度直冲最高速。★实测调。 */
-#define MEC_POS_ACC       50u
+#define MEC_POS_ACC       150u
 /** 小于这个位移 (m) 就当没动, 不发指令。 */
 #define MEC_POS_MIN_M     0.0005f
 /**
@@ -66,7 +66,7 @@ uint32_t malu_cm_topluse_s(float cm);
  * ★ 必须 > 0: Emm_V5 的**到位标志是"上一次运动留下"的**, 刚发完指令的那一刻
  *   它还是 1, 立刻查会误判成"已经到位"。等电机真的起转, 这个标志才会被清掉。
  */
-#define MEC_POS_START_DELAY_MS   60u
+#define MEC_POS_START_DELAY_MS   20u
 
 /**
   * @brief  按**车体位移**走一段固定距离 —— Emm_V5 位置模式 + 到位反馈。

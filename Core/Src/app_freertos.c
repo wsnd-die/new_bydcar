@@ -277,7 +277,7 @@ void StartDefaultTask(void *argument)
     if (cmd.k) {
 
     }
-    osDelay(20);
+    osDelay(10);
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -331,7 +331,7 @@ void gripper_task(void *argument)
   BlockBasic_LiftSync(0.0f);      /* 压限位归零 → 软件高度同步成 0 (之后用绝对高度指令) */
   printf("[scs] init SUCSESS: huart5 initialized\r\n");
   BlockBasic_TurntableTo(1);
-  Servo_SetAngle(129);
+  Servo_SetAngle(127);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
     // BlockBasic_TurntableTo(SERVO_ID_SCS0009_MAX-id);
@@ -362,11 +362,14 @@ void FC_TASK(void *argument)
 {
   /* USER CODE BEGIN FC_TASK */
   NX_Init();
+  NX_RequestMode(NX_MODE_YOLO);
+  NX_ApplyMode();
   /* Infinite loop */
   for(;;)
   {
     // FC_Fuction();
-    osDelay(10);
+    MSP_Color_DebugPoll();      /* 打印 [MSP-RX] color='r' rgb_raw="2003040" */
+    osDelay(100);
   }
   /* USER CODE END FC_TASK */
 }
@@ -406,7 +409,7 @@ void AC_Fuction(void *argument)
   // MecanumResult cmd = Mecanum_Calc(0.2,0);
   for(;;)
   {
-    Angle_Fuction();
+    // Angle_Fuction();
     osDelay(5);
     // Send_commandmotor(&cmd);
   }

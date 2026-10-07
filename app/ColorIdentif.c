@@ -33,6 +33,9 @@ static uint8_t T1[4][2]=
     {COLOR_RED,SHAPE_CYLINDER},
 };
 
+/** T1[] 的行数 = 摆放阶段要走的轮数 (每行对应一轮 FindCircle)。 */
+#define T1_ROWS   (sizeof(T1) / sizeof(T1[0]))
+
 /* ============================================================
  * TT_Init
  * ============================================================ */
@@ -161,10 +164,10 @@ static uint8_t s_seek_slot = 0u;
 uint8_t TT_SeekBlock() {
     if (s_seek_slot == 0) {
         s_seek_slot = 1u;
-        return 1;
+        return 1;                       /* 第 1 轮: 物理槽 1 的黄锥 */
     }
-    if (s_seek_slot > 4u) {
-        return 0;
+    if (s_seek_slot > T1_ROWS) {
+        return 0;                       /* T1[] 全部过完 */
     }
 
 
@@ -174,7 +177,42 @@ uint8_t TT_SeekBlock() {
             return (uint8_t)(s + 1u);   /* 下标 → 物理槽 */
         }
     }
+
+    /* 找不到: 游标**照样推进** (V1.27.0)。
+     *
+     * 原先是直接 `return 0` 把游标留在原地, 于是下一轮 FindCircle 又从头搜
+     * **同一个**组合。而 NF_STAGES 给的是固定 `{Event_FindCircle, 5u}` ——
+     * 只要有一个组合匹配不上 (漏料 / 识别不可信), 它就会把**后面所有轮次**
+     * 全部吃掉, 剩下的物块一件都放不出去。现场表现就是"漏一个物块之后,
+     * 剩下的也不放了"。
+     *
+     * T1[] 是"每轮推进一行"的表, 不是"直到找到为止"的重试队列 ——
+     * 匹配不上就丢掉这一行, 把轮次让给后面的组合。 */
+    s_seek_slot++;
     return 0;
+}
+
+/* ============================================================
+ * TT_BlocksCoverTable — T1[] 要的四个组合是否齐全
+ * ============================================================ */
+bool TT_BlocksCoverTable(void)
+{
+    for (uint8_t k = 0u; k < T1_ROWS; k++) {
+        bool found = false;
+
+        for (uint8_t s = 1u; s <= 4u && !found; s++) {
+            if (TT_IsCollected(s) &&
+                g_tt.color[s] == T1[k][0] &&
+                g_tt.shape[s] == T1[k][1]) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+    }
+    return true;    /* 四行都有对应的槽 —— 四个物块都放得出去 */
 }
 
 void TT_RotateReset(void)

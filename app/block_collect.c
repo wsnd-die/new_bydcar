@@ -163,9 +163,7 @@ static void identify_slot(uint8_t slot)
     int          raw   = BlockBasic_GripperRaw(slot);
     BlockShape_t shape = BlockBasic_ShapeFromRaw(raw, slot);
 
-    /* 颜色改为**窗口内投票** (V1.26.7): 转盘早就停在槽 N, 物块进来之后
-     * 传感器一直在报, 所以把 MSP_COLOR_VOTE_MS 里收到的帧全数一遍取多数,
-     * 比原来"丢掉残留再看下一帧"稳 —— 那正是"四个槽随机挂两个"的来源。 */
+
     Color_TypeDef c;
     if (!MSP_Color_Vote(MSP_COLOR_VOTE_MS, &c)) {
         c = collect_default_color(slot);
@@ -186,6 +184,55 @@ static void identify_slot(uint8_t slot)
 
     printf("[COLLECT] slot=%u raw=%d shape=%u color=%u\r\n",
            (unsigned)slot, raw, (unsigned)shape, (unsigned)c);
+}
+
+
+static const Color_TypeDef NF_DEF_COLOR[4] = {
+    COLOR_RED, COLOR_RED, COLOR_BLUE, COLOR_BLUE,
+};
+static const BlockShape_t NF_DEF_SHAPE[4] = {
+    SHAPE_RECT, SHAPE_CYLINDER, SHAPE_RECT, SHAPE_CYLINDER,
+};
+
+/**
+ * @brief 收集结果凑不齐 T1[] 时, 把**已采集**的槽整批换成默认表。
+ *
+ * **为什么需要**: 摆放阶段 `TT_SeekBlock()` 是按 `(颜色,形状)` 去 `T1[]` 里逐个搜槽
+ * 的, 每个组合只能匹配一个槽。识别一旦不可信 —— 形状阈值表 `Slot_Shape[]` 未标定
+ * (见 `block_basic.c`), 四个槽全判 `SHAPE_RECT`; 或颜色一票都没有 —— 多个槽就会
+ * 落在同一个组合上, `T1[]` 里要的另外两个组合无人匹配 → **那几个物块永远放不出去**。
+ * 现场表现: 四个物块只出去两个。
+ *
+ * 所以这里不猜"哪个槽错了", 而是校验四个组合齐不齐; 不齐就按默认表整批改写,
+ * 保证 (红方 红圆 蓝方 蓝圆) 各一个。与奖杯分支的 `trophy_fill_missing()` 同一思路。
+ *
+ * @note 只改**已采集**的槽 —— 漏料的槽不给默认组合, 保持 `TT_Init()` 后的 `(0,0)`,
+ *       `TT_SeekBlock()` 自然搜不到它, 转盘不会跑去那个空槽空放一次。
+ *       少来几个物块就只摆几件, 剩下的照常摆完。
+ */
+static void block_fill_defaults(void)
+{
+    if (TT_BlocksCoverTable()) {
+        return;             /* 识别结果可用, 一个槽都不动 */
+    }
+
+    printf("[COLLECT] (颜色,形状) 凑不齐 -> 已采集的槽整批走默认表\r\n");
+
+    uint8_t k = 0u;
+    for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++) {
+        const uint8_t s = (uint8_t)(slot - 1u);
+
+        if (!TT_IsCollected(s)) {
+            continue;       /* 漏料的槽不硬塞组合 */
+        }
+
+        TT_SetColor(s, NF_DEF_COLOR[k]);
+        TT_SetShape(s, (uint8_t)NF_DEF_SHAPE[k]);
+        printf("[COLLECT] slot %u -> default color=%u shape=%u\r\n",
+               (unsigned)slot, (unsigned)NF_DEF_COLOR[k],
+               (unsigned)NF_DEF_SHAPE[k]);
+        k++;                /* 最多 4 个已采集槽, 不会越界 */
+    }
 }
 
 /* ================================================================
@@ -246,28 +293,35 @@ static void collect_slots(void)
     {
         (void)BlockBasic_TurntableTo(CONE_SLOT);
         printf("[COLLECT] waiting cone\r\n");
-        if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
+        if (!wait_block_entered(2000, NULL)) {   /* NULL = 不投票 */
             printf("[COLLECT] no cone, abort\r\n");
-            return;     /* 圆锥没来 */
         }
 
         (void)BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
 
         for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++)
         {
-            if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
+            if (wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
+                (void)BlockBasic_GripperClamp(slot);
+                identify_slot(slot);
+            } else {
                 printf("[COLLECT] slot %u: no block, skip\r\n", (unsigned)slot);
-                continue;
             }
-            osDelay(COLLECT_SETTLE_MS);
-            (void)BlockBasic_GripperClamp(slot);
-            identify_slot(slot);
+
+            /* 转盘推进 / 关门**不管漏没漏料都要做** (V1.27.0)。
+             *
+             * 原先是 `continue`, 把这一句一起跳掉了 —— 漏一个物块, 转盘就停在
+             * 上一槽, 之后所有槽**错位一位**: 夹的是上一槽的位置, 记的却是下一槽
+             * 的槽号。收集结果整批被污染, 摆放阶段就再也对不上 T1[] 了。
+             * 漏料只该让**这一个槽**没有数据, 不该动后面的槽。 */
             if (slot < BLOCK_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
                 Servo_Angle(BLOCK_CLOSE_DOOR);
             }
         }
+
+        block_fill_defaults();
     }
     else
     {
@@ -293,7 +347,7 @@ static void collect_slots(void)
                        (unsigned)slot, (unsigned)NX_GetTrophyCount());
             }
 
-            osDelay(400);
+            osDelay(100);
             if (slot < TROPHY_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
