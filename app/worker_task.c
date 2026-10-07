@@ -544,6 +544,7 @@ static void NF_Stage_FindCircle(void)
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
         Circle_Follow();
+        printf("[FLOW] FindCircle %f,%f\r\n",g_circle_avg_x,g_circle_avg_y);
         if (HAL_GetTick() - t0 > NF_CIRCLE_TIMEOUT_MS) {
             printf("[FLOW] FindCircle 超时 (%ums), 放弃本拍\r\n",
                    (unsigned)NF_CIRCLE_TIMEOUT_MS);
@@ -555,7 +556,7 @@ static void NF_Stage_FindCircle(void)
     }
 
     if (TT_RotateByQR()) {
-        printf("[FLOW] FindCircle -> 转盘物理槽 %u\r\n", (unsigned)TT_CurrentSlot());
+        printf("[FLOW] FindCircle %f,%f 转盘物理槽 %u\r\n",g_circle_avg_x,g_circle_avg_y, (unsigned)TT_CurrentSlot());
         Place('O', g_circle_avg_x, g_circle_avg_y, 0u, TT_CurrentSlot());
     } else {
         printf("[FLOW] FindCircle: 该 (颜色,形状) 在 g_tt 里找不到或已放完, 跳过\r\n");
