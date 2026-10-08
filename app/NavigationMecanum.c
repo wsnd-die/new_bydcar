@@ -34,15 +34,15 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     // {   0.450772f, 1.269985f,-2.411954f }, /* 11 a 点 */
 
     {   1.076288f,-0.395111f,-1.545575f }, /* 12 摆放e 点 */
-    {   0.946693f, 0.100097f,-1.499596f }, /* 13 摆放d 点 */
+    // {   0.946693f, 0.100097f,-1.499596f }, /* 13 摆放d 点 */
     {   0.930956f, 0.113929f,-0.673924f }, /* 14 摆放c 点 */
     {   0.936404f, 0.415504f, 0.818769f }, /* 15 摆放a 点 */
-    {   0.660611f, 0.167082f, 0.855780f }, /* 16 摆放b 点 */
+    // {   0.660611f, 0.167082f, 0.855780f }, /* 16 摆放b 点 */
+    {0.01f,0.03f,0.0f}
 
-    {   0.0f,  0.05f, 0.0f }, /* 17 回家点 */
 };
 
-uint8_t g_waypoint_count = 13u;
+uint8_t g_waypoint_count = 11u;
 
 /* ==================================================================
  * V1.23.0: 路线段打断
@@ -106,22 +106,22 @@ static float NAV_Ramp(float cur, float target, float acc, float dt)
 
 #if NAV_XY_PROFILE
 /**
- * @brief 平移轴参考速度 —— 近场线性 P, 远场用制动曲线当上限。
+ * @brief 平移轴参考速度 —— 按 |误差| 在近场/远场两个控制律之间**平滑切换**。
  *
- *      v_ref = clamp(Kp·e, ±√(2·a·|e|), ±v_max)
+ *      lim_far  = √(2·a_brk·|e|)                远场律: 制动曲线上限
+ *      lim_near = NAV_CREEP_X_V / _Y_V          近场律: 低速爬行上限
+ *      w        = smoothstep(|e|; LO, HI)       0 = 近场, 1 = 远场
+ *      v        = clamp(Kp·e - Kd·v_now, ±lerp(lim_near, lim_far, w))
  *
- * **近场** (|e| < 2a/Kp²): v = Kp·e —— 线性、过零连续、增益有限, 跟原来的纯 P
- * 一样温和。
+ * **远场**速度不越过制动曲线: |v| ≤ √(2·a·|e|) 就是"此刻还刹得住", 补上纯 P
+ * 缺的那一环减速约束。
  *
- * **远场** (|e| > 2a/Kp²): 制动曲线成为上限。|v| ≤ √(2·a·|e|) 就是"此刻还
- * 刹得住", 高速接近时不会冲过头 —— 这是纯 P 原本缺的那一环。
+ * **近场**把上限压到爬行速度: 末端几十厘米慢走, 不再被 Kp·e 推着冲过容差、
+ * 再往回晃。封顶值必须 < NAV_ARRIVE_VMAX, 理由见头文件那两行 ★。
  *
- * @warning **曲线只能当上限, 不能当参考**(V1.24.1 修正)。上一版直接拿
- *          √(2·a·e) 做参考, 有两个致命毛病: ①等效增益在 e→0 时发散
- *          (d√e/de → ∞); ②死区边界是"0 → √(2·a·deadband)"的**阶跃**。
- *          位置噪声一到, 指令就在 0 和 0.2 m/s 之间以控制频率来回跳 ——
- *          表现就是**跑到点位来回晃, 比纯 P 还差**。
- *          (原来的死区也一并删了: 线性项在 e=0 处连续到 0, 没有边界可抖。)
+ * @note **为什么是权重混合、不是 if 分段**: 两条律直接 if 切, 边界上指令是
+ *       阶跃 —— 以 X 轴为例, |e| 跨过 LO 时上限从 Kp·LO 跳到 √(2·a·LO)。
+ *       smoothstep 两端导数为 0, 边界连续且无拐点, 不会顿挫。
  *
  * @param err    位置误差 (m), 带符号
  * @param v_max  速度上限 m/s
@@ -134,10 +134,22 @@ static float NAV_Ramp(float cur, float target, float acc, float dt)
  * @retval 参考速度 m/s (世界系)
  *
  * @note X/Y 写成两段独立分支, 是为了以后**按轴单独改**时只动一段、不动另一段。
- *       目前两段逐字相同, 改任何一段前先想清楚是不是只想改该轴。
+ *       目前两段逐字同式 (只差爬行上限取 NAV_CREEP_X_V 还是 _Y_V), 改任何
+ *       一段前先想清楚是不是只想改该轴。
  * @warning 末尾必须有兜底 return: 上一版 (a5b33fd) 的两段 'x'/'y' 分支都没有
  *          else → choice 是别的字符时"有路径不返回值" (-Wreturn-type),
  *          返回值是垃圾。
+ * @warning **判据只能用 fabsf(err), 上限只能赋正值**(V1.28.1 修)。'y' 支曾写成
+ *          `if (err<0.3) y_vc = y_v;`, 有两处致命问题:
+ *          ① 判据是**带符号**的 err → 所有负误差都落进该分支;
+ *          ② `y_vc` 是**幅值**语义, 赋成带符号的 y_v 后 `-y_vc` 变成 `-y_v`,
+ *             于是下一行 `if (y_v < -y_vc)` 恒真 → `y_v = -y_v` **符号翻转**,
+ *             ey<0 时输出顶到 +v_max, 车朝**背离目标**的方向满速冲出去。
+ *          要"放开上限"就赋 `v_max`, 绝不能赋 `y_v`。
+ * @warning **曲线只能当上限, 不能当参考**(V1.24.1 修正)。那一版直接拿
+ *          √(2·a·e) 做参考, 两个毛病: ①等效增益在 e→0 时发散 (d√e/de → ∞);
+ *          ②死区边界是"0 → √(2·a·deadband)"的阶跃 —— 位置噪声一到, 指令就在
+ *          0 和 0.2 m/s 之间以控制频率来回跳, 表现是**跑到点位来回晃**。
  * @warning **v_now 传什么, 决定 D 项是不是真阻尼**(V1.25.4 备注 1):
  *          - 传**实测**速度 → -kd·v_now 是真正的速度阻尼 (超前, 压超调);
  *          - 传**斜坡状态** vx_cmd/vy_cmd (当前接法) → 反馈的是控制器自己的输出,
@@ -147,25 +159,28 @@ static float NAV_Ramp(float cur, float target, float acc, float dt)
 static float NAV_AxisRef(float err, float v_max, float a_brk, float kp,
                          float kd, float v_now, char choice)
 {
+    /* 近/远场切换权重 w ∈ [0,1]: |e| ≤ LO → 0 (纯近场), ≥ HI → 1 (纯远场)。
+     * smoothstep 两端导数为 0 —— 切换点连续、无拐点。 */
+    float ae = fabsf(err);
+    float w  = NAV_Clamp((ae - NAV_SWITCH_LO) / (NAV_SWITCH_HI - NAV_SWITCH_LO),
+                         0.0f, 1.0f);
+    w = w * w * (3.0f - 2.0f * w);
+
     if (choice == 'x')
     {
-        float x_v  = kp * err - kd * v_now;             /* 近场 P + D (见 v_now 警告) */
-        float x_vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
+        float x_v   = kp * err - kd * v_now;            /* 近场律: 线性 P + D  */
+        float x_lim = sqrtf(2.0f * a_brk * ae);         /* 远场律: 制动曲线上限 */
+        x_lim = NAV_CREEP_X_V + (x_lim - NAV_CREEP_X_V) * w;  /* 按 w 混到近场爬行上限 */
 
-        if (x_v >  x_vc) x_v =  x_vc;
-        if (x_v < -x_vc) x_v = -x_vc;
-
-        return NAV_Clamp(x_v, -v_max, v_max);
+        return NAV_Clamp(NAV_Clamp(x_v, -x_lim, x_lim), -v_max, v_max);
     }
     if (choice == 'y')
     {
-        float y_v  = kp * err - kd * v_now;             /* 近场 P + D (见 v_now 警告) */
-        float y_vc = sqrtf(2.0f * a_brk * fabsf(err));  /* 远场上限 (此刻还刹得住) */
+        float y_v   = kp * err - kd * v_now;            /* 近场律: 线性 P + D */
+        float y_lim = sqrtf(2.0f * a_brk * ae);         /* 远场律: 制动曲线上限 */
+        y_lim = NAV_CREEP_Y_V + (y_lim - NAV_CREEP_Y_V) * w;  /* 按 w 混到近场爬行上限 */
 
-        if (y_v >  y_vc) y_v =  y_vc;
-        if (y_v < -y_vc) y_v = -y_vc;
-
-        return NAV_Clamp(y_v, -v_max, v_max);
+        return NAV_Clamp(NAV_Clamp(y_v, -y_lim, y_lim), -v_max, v_max);
     }
 
     return 0.0f;   /* 兜底: 未知轴号 → 零速, 不做无谓的移动 */
@@ -296,9 +311,6 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
 #if NAV_XY_PROFILE
 
-            /* v_now 取**上一拍的斜坡状态** (= 车此刻大体在跑的速度), 不是实测:
-             * 见 NAV_AxisRef 的 @warning —— 想换成真阻尼, 把这两个实参换成
-             * 实测速度即可 (OPS9 的 pose.vx/vy 恒为 0, 得自己差分)。 */
             float vx_ref = NAV_AxisRef(ex, NAV_VMAX_X, NAV_BRK_X, NAV_KP_X_LIN,
                                        NAV_KD_X_LIN, vx_cmd, 'x');
             float vy_ref = NAV_AxisRef(ey, NAV_VMAX_Y, NAV_BRK_Y, NAV_KP_Y_LIN,
@@ -318,7 +330,6 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
             MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
             Send_commandmotor(&res);
-
 
             if (fabsf(ex) <= NAV_TOL_XY && fabsf(ey) <= NAV_TOL_XY &&
                 fabsf(eyaw) <= NAV_TOL_YAW &&

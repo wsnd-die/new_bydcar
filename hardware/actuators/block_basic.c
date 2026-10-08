@@ -5,6 +5,8 @@
  */
 #include "Common_used.h"
 #include "block_basic.h"
+
+#include "ColorIdentif.h"
 #include "emm_5v.h"
 #include "mecanum.h"        /* Mecanum_MoveBodyPos —— Place() 的定距移动 */
 #include "key.h"
@@ -160,7 +162,7 @@ int BlockBasic_GripperRaw(uint8_t slot)
  *       写在头文件里会被每个包含它的 .c 各生成一份, 链接期 multiple definition。 */
 #define SLOT_SHAPE_FIRST   2u          /* 表覆盖的物理槽起点 (>0 是因为槽 1 是黄锥, 判它没意义) */
 #define SLOT_SHAPE_COUNT   4u
-static const int Slot_Shape[SLOT_SHAPE_COUNT] = { 640, 641, 637, 641 };
+static const int Slot_Shape[SLOT_SHAPE_COUNT] = { 639, 636, 637, 641 };
 
 _Static_assert(SLOT_SHAPE_FIRST + SLOT_SHAPE_COUNT - 1u <= BLOCK_TURNTABLE_POS_COUNT,
                "形状阈值表越过了转盘槽位上限");
@@ -172,7 +174,7 @@ BlockShape_t BlockBasic_ShapeFromRaw(int raw_angle, uint8_t slot)
         slot >= SLOT_SHAPE_FIRST + SLOT_SHAPE_COUNT) {
         return SHAPE_UNKNOWN;   /* 读失败 / 槽号不在表内, 都不能猜 */
     }
-    return (raw_angle > Slot_Shape[slot - SLOT_SHAPE_FIRST])
+    return (raw_angle >= Slot_Shape[slot - SLOT_SHAPE_FIRST])
            ? SHAPE_RECT : SHAPE_CYLINDER;
 }
 
@@ -401,9 +403,9 @@ void Servo_SetAngle(float Angle)
 
 /** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
-#define PLACE_MOVE_TIMEOUT_MS   1500u
+#define PLACE_MOVE_TIMEOUT_MS   1200u
 
-void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
+void Place(char dir,float x,float y,int16_t height,uint8_t slot)
 {
     if (dir == 'O')
     {
@@ -411,21 +413,44 @@ void Place(char dir,float x,float y,uint16_t height,uint8_t slot)
         float fwd  = 0.072f - y * PLACE_CIRCLE_SCALE_M;
         float left = 0.005f + x * PLACE_CIRCLE_SCALE_M;
 
-        BlockBasic_GripperRelease(slot);
+
         if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
             printf("[PLACE] 前移没等齐到位 (超时)\r\n");
         }
-        if (height!=0)
+        BlockBasic_GripperRelease(slot);
+        if (height <=0)
         {
-            BlockBasic_LiftTo(DOWN, height);
+            BlockBasic_LiftTo(DOWN, abs(height));
             osDelay(200);
+            /* 后退 0.05 m (车体 -X 方向) */
+            if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
+                printf("[PLACE] 后退没等齐到位 (超时)\r\n");
+            }
         }
-   /* 松开正在放的这个槽 = 解锁 */
+        else
+        {
+            if (slot == 1)
+        {
+            if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
+                printf("[PLACE] 后退没等齐到位 (超时)\r\n");
+            }
+        }
+            else
+            {
+                BlockBasic_LiftTo(UP, abs(height));
+                osDelay(670);
+                TT_RotateByQR();
+                osDelay(200);
+                BlockBasic_GripperRelease(TT_CurrentSlot());
+                osDelay(100);
+                /* 后退 0.05 m (车体 -X 方向) */
+                if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
+                    printf("[PLACE] 后退没等齐到位 (超时)\r\n");
+                }
+                BlockBasic_LiftTo(DOWN, abs(height));
+            }
+        }
 
-        /* 后退 0.05 m (车体 -X 方向) */
-        if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
-            printf("[PLACE] 后退没等齐到位 (超时)\r\n");
-        }
     }
 }
 

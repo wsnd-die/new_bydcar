@@ -107,15 +107,13 @@ uint8_t TT_CurrentSlot(void);
 void    TT_RotateReset(void);                    /* 重置旋转进度 */
 
 /**
- * @brief  T1[] 要的四个 `(颜色,形状)` 组合, 是不是每个都能在**已采集**的槽里找到。
- * @retval true   四个组合齐全 —— 摆放阶段四行都能搜到槽, 四个物块都放得出去。
- * @retval false  有组合无人匹配 —— 对应那一轮的 FindCircle 会"找不到"、跳过。
+ * @brief  已采集的槽够不够把 `T1[]` 摆完 —— 按**颜色**逐色对账。
+ * @retval true   `T1[]` 里每种颜色要几个, 已采集的槽里就有几个。
+ * @retval false  某种颜色不够 —— `TT_SeekBlock()` 会有行找不到槽, 那件放不出去。
  *
- * @note   **这是摆放的前提条件, 不是诊断**: `TT_SeekBlock()` 是按组合逐个搜槽的,
- *         两行若落在同一个槽上, 另一行就永远空手。识别不可信时 (形状阈值表未标定
- *         → 恒判 `SHAPE_RECT`, 见 `block_basic.c` 的 `Slot_Shape[]`) 必然凑不齐。
- *         采集侧拿到 `false` 时应把已采集的槽整批改写成默认表
- *         —— 见 `app/block_collect.c` 的 `block_fill_defaults()`。
+ * @note   **这是摆放的前提条件, 不是诊断**。采集侧拿到 `false` 时应把已采集的槽
+ *         整批改写成默认表 —— 见 `app/block_collect.c` 的 `block_fill_defaults()`。
+ * @note   **不再看形状** (V1.28.0): 摆放只按颜色选块, 形状那一维已经不参与。
  */
 bool    TT_BlocksCoverTable(void);
 bool    TT_IsDone(void);                         /* 检查是否全部转完 */

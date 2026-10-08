@@ -309,7 +309,7 @@ void ops9imu_fuction(void *argument)
     //
     // }
    // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
-    osDelay(5);
+    osDelay(3);
   }
   /* USER CODE END ops9imu_fuction */
 }
@@ -339,13 +339,13 @@ void gripper_task(void *argument)
   }
   // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
 
-  BlockBasic_LiftToAbs(5.0f);     /* 夹爪初始化抬到 3mm (等价原 UP,3) */
+  BlockBasic_LiftToAbs(4.0f);     /* 夹爪初始化抬到 4mm */
   printf("[scs] gripper init done\r\n");
   for (;;)
   {
     BlockCollect_Poll();
     // printf("%d,%d\r\n",IR_ObjectEntered(),IR_ObjectPresent());
-    // MSP_Color_DebugPoll();
+    MSP_Color_DebugPoll();
     osDelay(20);
   }
   /* USER CODE END gripper_task */
@@ -369,7 +369,7 @@ void FC_TASK(void *argument)
   {
     // FC_Fuction();
     MSP_Color_DebugPoll();      /* 打印 [MSP-RX] color='r' rgb_raw="2003040" */
-    osDelay(100);
+    osDelay(10);
   }
   /* USER CODE END FC_TASK */
 }

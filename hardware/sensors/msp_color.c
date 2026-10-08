@@ -254,7 +254,7 @@ bool MSP_Color_DebugPoll(void)
     }
     buf[n] = '\0';
     // printf("[MSP-RX] color='%c' rgb_raw=\"%s\"\r\n", (char)s_msp.color, buf);
-    (void)buf;      /* 上面那行打印暂时关掉, 先按"已用"处理免得 -Wunused-but-set-variable */
+    (void)buf;
     return true;
 }
 

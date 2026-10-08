@@ -58,7 +58,7 @@ typedef enum
  *       **窗口里至少要有 3 票**才谈得上"多数", 不够就把这个数往上加;
  *       加太长会拖慢采集 (每槽多等这么久)。
  */
-#define MSP_COLOR_VOTE_MS      400u
+#define MSP_COLOR_VOTE_MS      600u
 
 /** ISR 侧: 由 Core/Src/usart.c 的 HAL_UARTEx_RxEventCallback() 分发器调用。 */
 void msp_color_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size);

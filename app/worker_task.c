@@ -180,7 +180,7 @@ static const Jang_type NF_RANK[NF_RANK_COUNT] = {
  * 摆放阶段已改成反查 g_tt.trophy[] (见 ColorIdentif.c 的 SlotByTrophy)。 */
 
 /** 各奖杯放置时的丝杆高度 (mm)。。 */
-static const uint16_t NF_PLACE_HEIGHT[4] = { 0u, 5u, 4u, 5u };
+static const int16_t NF_PLACE_HEIGHT[4] = { 0u, -5u, -4u, -5u };
 
 /** 五个槽位里实际放的物块颜色。
  *  ★ NX 接入点: 换成 NX 回传的「收集到的颜色物块」。
@@ -219,7 +219,7 @@ static const NF_Stage_t NF_STAGES[] = {
      // { Event_Navigation, 4u },
       { Event_PlaceDown, 3u },
      {Event_Collect_L,  1u },
-    { Event_FindCircle,  5u },
+    { Event_FindCircle,  3u },   /* 1 黄锥 + 4 物块 = T1[] 的 4 行 + 首轮 */
 };
 
 #endif
@@ -394,9 +394,9 @@ static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
  * 所以在流程派发下一个阶段**之前**, 原地向前低速蹭一小段, 一直蹭到物块
  * "完全进入"进料口为止。距离和时长两道限幅, 蹭不进去也不会一直顶着。
  * ================================================================== */
-#define NF_CREEP_FWD_M       0.13f    /* 前进距离上限 (m) —— 第一道限幅 */
-#define NF_CREEP_VMPS        0.3f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
-#define NF_CREEP_TIMEOUT_MS  2400u    /* 总时长上限 (ms) —— 第二道限幅 */
+#define NF_CREEP_FWD_M       0.19f    /* 前进距离上限 (m) —— 第一道限幅 */
+#define NF_CREEP_VMPS        0.4f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
+#define NF_CREEP_TIMEOUT_MS  2300u    /* 总时长上限 (ms) —— 第二道限幅 */
 #define NF_CREEP_TICK_MS     10u      /* 蹭的控制周期 (ms) */
 
 /** 需要"到位后向前蹭"的点位 (1 基点号, 与 NavigationMecanum.c 的
@@ -476,6 +476,7 @@ static void NF_Stage_Navigation(void)
                (int)next, (unsigned)s_stage_idx, (unsigned)s_stage_left);
         NLF_Request(next);
     } else {
+        Servo_SetAngle(127);
         printf("[FLOW] all stages done -> GoHome\r\n");
         AG_Stop();
         NLF_Request(Event_GoHome);
@@ -533,7 +534,6 @@ static void NF_Stage_Collect(BlockCollectStage_t stage)
     // NLF_Request(Event_Navigation);   /* 立刻进导航, 采集并行 */
 }
 
-
 static void NF_Stage_FindCircle(void)
 {
     uint32_t t0;
@@ -544,7 +544,7 @@ static void NF_Stage_FindCircle(void)
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
         Circle_Follow();
-        printf("[FLOW] FindCircle %f,%f\r\n",g_circle_avg_x,g_circle_avg_y);
+        // printf("[FLOW] FindCircle %f,%f\r\n",g_circle_avg_x,g_circle_avg_y);
         if (HAL_GetTick() - t0 > NF_CIRCLE_TIMEOUT_MS) {
             printf("[FLOW] FindCircle 超时 (%ums), 放弃本拍\r\n",
                    (unsigned)NF_CIRCLE_TIMEOUT_MS);
@@ -557,17 +557,17 @@ static void NF_Stage_FindCircle(void)
 
     if (TT_RotateByQR()) {
         printf("[FLOW] FindCircle %f,%f 转盘物理槽 %u\r\n",g_circle_avg_x,g_circle_avg_y, (unsigned)TT_CurrentSlot());
-        Place('O', g_circle_avg_x, g_circle_avg_y, 0u, TT_CurrentSlot());
+        Place('O', g_circle_avg_x, g_circle_avg_y, 50u, TT_CurrentSlot());
     } else {
-        printf("[FLOW] FindCircle: 该 (颜色,形状) 在 g_tt 里找不到或已放完, 跳过\r\n");
+        printf("[FLOW] FindCircle: 该物块在 g_tt 里找不到或已放完, 跳过\r\n");
     }
 
     g_circle_dir = ' ';         /* 清残留, 让下一次找圆重新判定 */
     //TT_RotateReset();
     //Wheel_Odom_Reset();
 
-    //NLF_Request(Event_Navigation);
     NLF_Request(Event_Navigation);
+    // NLF_Request(Event_FindCircle);
 }
 
 

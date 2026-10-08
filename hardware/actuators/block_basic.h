@@ -204,7 +204,7 @@ void Servo_Angle(float angle_deg);
  *         `BlockBasic_GripperRelease()`, 而它是要槽号的 —— 编译不过
  *         (`too few arguments`); 而且"松开哪个夹爪"本来也只能由调用方告诉。
  */
-void Place(char dir,float x,float y,uint16_t height,uint8_t slot);
+void Place(char dir,float x,float y,int16_t height,uint8_t slot);
 
 void Servo_SetAngle(float Angle);
 bool BPlace_SetZero(void) ;

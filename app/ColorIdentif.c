@@ -25,12 +25,18 @@ TT_t g_tt;
  * 下表: T1[pattern][slot], slot: 0=A 1=B 2=C 3=D 4=E
  * ============================================================ */
 
-static uint8_t T1[4][2]=
+/* 摆放顺序表 —— **一行 = 一轮 FindCircle, 一行只写"要哪种颜色"** (V1.28.0)。
+ *
+ * 原先每行是 `{颜色, 形状}`, 形状那一列的**唯一作用是让四行互不相同** ——
+ * `TT_SeekBlock()` 按 (颜色,形状) 搜槽, 同一个组合永远只匹配到同一个槽。
+ * 现在不再判形状, 改由 `TT_SeekBlock()` 自己记住"这个槽已经交出去过了"
+ * (见 s_used_mask), 所以行与行之间不再需要靠形状来区分。
+ *
+ * 2 蓝 + 2 红, 与 block_collect.c 里 collect_default_color() 兜底表的配比一致。
+ * ★ 顺序 = 摆放先后, 改这里就改摆放顺序。 */
+static uint8_t T1[4] =
 {
-   {COLOR_BLUE,SHAPE_RECT},
-    {COLOR_BLUE,SHAPE_CYLINDER},
-    {COLOR_RED,SHAPE_RECT},
-    {COLOR_RED,SHAPE_CYLINDER},
+    COLOR_BLUE, COLOR_BLUE, COLOR_RED, COLOR_RED,
 };
 
 /** T1[] 的行数 = 摆放阶段要走的轮数 (每行对应一轮 FindCircle)。 */
@@ -157,9 +163,16 @@ uint8_t SlotByTrophy(uint8_t rank)
  *  给 `Place()` 松夹爪用 (物料摆放逐个放, 必须知道当前是哪个槽在门口)。 */
 static uint8_t g_tt_last_slot = 0u;
 
-/** `TT_SeekBlock()` 的推进游标: 0 = 还没转过, 1..3 = 已按 T1[1..3] 匹配过。
+/** `TT_SeekBlock()` 的推进游标: 0 = 还没转过, 1..T1_ROWS = 已匹配过 T1[] 的前几行。
  *  `TT_RotateReset()` 归零。提到文件级是因为它要从 TT_SeekBlock 外重置。 */
 static uint8_t s_seek_slot = 0u;
+
+/** 已经交给摆放的槽 (bit1..4 对应 g_tt 下标 1..4, 即物理槽 2~5)。
+ *
+ *  只按颜色搜时必须记住这个 (V1.28.0): `T1[]` 里同色的行不止一行, 而搜索
+ *  总是从 `s = 1` 开始, 不记的话两行会**指向同一个槽** —— 一个槽被放两次,
+ *  另一件永远放不出去。`TT_RotateReset()` 清零。 */
+static uint8_t s_used_mask = 0u;
 
 uint8_t TT_SeekBlock() {
     if (s_seek_slot == 0) {
@@ -170,54 +183,63 @@ uint8_t TT_SeekBlock() {
         return 0;                       /* T1[] 全部过完 */
     }
 
+    const uint8_t want = T1[s_seek_slot - 1u];
 
-    for (uint8_t s = 1u; s <= 4u; s++) {
-        if (g_tt.color[s]==T1[s_seek_slot-1][0] && g_tt.shape[s]==T1[s_seek_slot-1][1]) {
+    for (uint8_t s = 1u; s <= 4u; s++)
+    {
+        if ((s_used_mask & (uint8_t)(1u << s)) != 0u) {
+            continue;                   /* 这个槽已经放过了 */
+        }
+        if (!TT_IsCollected(s)) {
+            continue;                   /* 没采到 (漏料), 别跑去空槽 */
+        }
+        if (g_tt.color[s] == want) {
+            s_used_mask |= (uint8_t)(1u << s);
             s_seek_slot++;
             return (uint8_t)(s + 1u);   /* 下标 → 物理槽 */
         }
     }
 
-    /* 找不到: 游标**照样推进** (V1.27.0)。
-     *
-     * 原先是直接 `return 0` 把游标留在原地, 于是下一轮 FindCircle 又从头搜
-     * **同一个**组合。而 NF_STAGES 给的是固定 `{Event_FindCircle, 5u}` ——
-     * 只要有一个组合匹配不上 (漏料 / 识别不可信), 它就会把**后面所有轮次**
-     * 全部吃掉, 剩下的物块一件都放不出去。现场表现就是"漏一个物块之后,
-     * 剩下的也不放了"。
-     *
-     * T1[] 是"每轮推进一行"的表, 不是"直到找到为止"的重试队列 ——
-     * 匹配不上就丢掉这一行, 把轮次让给后面的组合。 */
+    /* 没找到同色的剩余槽 → 推进游标 (V1.27.0): 否则这一行会把后面所有
+     * FindCircle 轮次全部吃掉, 剩下的物块一件都放不出去。 */
     s_seek_slot++;
     return 0;
 }
 
 /* ============================================================
- * TT_BlocksCoverTable — T1[] 要的四个组合是否齐全
+ * TT_BlocksCoverTable — 已采集的槽够不够摆完 T1[]
  * ============================================================ */
 bool TT_BlocksCoverTable(void)
 {
-    for (uint8_t k = 0u; k < T1_ROWS; k++) {
-        bool found = false;
+    static const Color_TypeDef COLORS[2] = { COLOR_RED, COLOR_BLUE };
 
-        for (uint8_t s = 1u; s <= 4u && !found; s++) {
-            if (TT_IsCollected(s) &&
-                g_tt.color[s] == T1[k][0] &&
-                g_tt.shape[s] == T1[k][1]) {
-                found = true;
+    /* 按颜色分别对账: T1[] 要几个 vs 已采集的槽里有几个。
+     * (不再看形状 —— 摆放只按颜色选块。) */
+    for (uint8_t c = 0u; c < 2u; c++) {
+        uint8_t want = 0u, have = 0u;
+
+        for (uint8_t k = 0u; k < T1_ROWS; k++) {
+            if (T1[k] == COLORS[c]) {
+                want++;
+            }
+        }
+        for (uint8_t s = 1u; s <= 4u; s++) {
+            if (TT_IsCollected(s) && g_tt.color[s] == COLORS[c]) {
+                have++;
             }
         }
 
-        if (!found) {
+        if (have < want) {
             return false;
         }
     }
-    return true;    /* 四行都有对应的槽 —— 四个物块都放得出去 */
+    return true;    /* 每种颜色都够 —— 四件都放得出去 */
 }
 
 void TT_RotateReset(void)
 {
     s_seek_slot = 0u;
+    s_used_mask = 0u;       /* "已放过的槽" 必须跟着一起清, 否则第二轮一件都放不出去 */
 }
 bool TT_RotateByQR(void)
 {
@@ -226,14 +248,13 @@ bool TT_RotateByQR(void)
 
     /* cnt 未设置(=0)时按 5 处理, 保证找圆进度能推进 */
 
-
    slot= TT_SeekBlock();
 
     if (slot!=0) {
-        BlockBasic_TurntableTo(slot);
-        g_tt_last_slot = slot;   /* 记为"当前在门口"的物理槽号 (1~5) */
-        osDelay(500);
-        return true;
+            BlockBasic_TurntableTo(slot);
+            g_tt_last_slot = slot;   /* 记为"当前在门口"的物理槽号 (1~5) */
+            // osDelay(500);
+            return true;
     }
     return false;
 }

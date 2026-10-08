@@ -170,8 +170,6 @@ static void identify_slot(uint8_t slot)
         printf("[COLLECT] slot %u: color 一票没有 -> default\r\n", (unsigned)slot);
     }
 
-    /* 形状唯一的"读不出来"就是 raw < 0 (舵机总线失败) 或槽号不在表内,
-     * 那时 ShapeFromRaw 返回 SHAPE_UNKNOWN —— 与颜色超时同一个位置兜底。 */
     if (shape == SHAPE_UNKNOWN) {
         shape = collect_default_shape(slot);
         printf("[COLLECT] slot %u: shape unknown -> default\r\n", (unsigned)slot);
@@ -187,6 +185,8 @@ static void identify_slot(uint8_t slot)
 }
 
 
+/** 默认颜色分配 —— **2 红 + 2 蓝**, 必须与 ColorIdentif.c 的 `T1[]` 配比一致,
+ *  否则 `TT_BlocksCoverTable()` 还是判"凑不齐"、改写也白改。 */
 static const Color_TypeDef NF_DEF_COLOR[4] = {
     COLOR_RED, COLOR_RED, COLOR_BLUE, COLOR_BLUE,
 };
@@ -195,20 +195,21 @@ static const BlockShape_t NF_DEF_SHAPE[4] = {
 };
 
 /**
- * @brief 收集结果凑不齐 T1[] 时, 把**已采集**的槽整批换成默认表。
+ * @brief 收集结果的颜色配比凑不齐 `T1[]` 时, 把**已采集**的槽整批换成默认表。
  *
- * **为什么需要**: 摆放阶段 `TT_SeekBlock()` 是按 `(颜色,形状)` 去 `T1[]` 里逐个搜槽
- * 的, 每个组合只能匹配一个槽。识别一旦不可信 —— 形状阈值表 `Slot_Shape[]` 未标定
- * (见 `block_basic.c`), 四个槽全判 `SHAPE_RECT`; 或颜色一票都没有 —— 多个槽就会
- * 落在同一个组合上, `T1[]` 里要的另外两个组合无人匹配 → **那几个物块永远放不出去**。
- * 现场表现: 四个物块只出去两个。
+ * **为什么需要**: 摆放阶段 `TT_SeekBlock()` 是按**颜色**去 `T1[]` 里逐个搜槽的,
+ * 而 `T1[]` 要的是 2 红 + 2 蓝。识别一旦不可信 (颜色一票都没有 → 走
+ * `collect_default_color()`; 或四个槽认出同一个颜色), 某种颜色的槽就不够 →
+ * **那几件永远放不出去**。
  *
- * 所以这里不猜"哪个槽错了", 而是校验四个组合齐不齐; 不齐就按默认表整批改写,
- * 保证 (红方 红圆 蓝方 蓝圆) 各一个。与奖杯分支的 `trophy_fill_missing()` 同一思路。
+ * 所以这里不猜"哪个槽错了", 而是按颜色对账; 不齐就按默认表整批改写。
+ * 与奖杯分支的 `trophy_fill_missing()` 同一思路。
  *
- * @note 只改**已采集**的槽 —— 漏料的槽不给默认组合, 保持 `TT_Init()` 后的 `(0,0)`,
- *       `TT_SeekBlock()` 自然搜不到它, 转盘不会跑去那个空槽空放一次。
- *       少来几个物块就只摆几件, 剩下的照常摆完。
+ * @note 只改**已采集**的槽 —— 漏料的槽不给默认值, 颜色保持 `TT_Init()` 后的
+ *       `COLOR_UNKNOWN`, `TT_SeekBlock()` 自然搜不到它, 转盘不会跑去那个空槽
+ *       空放一次。少来几个物块就只摆几件, 剩下的照常摆完。
+ * @note **形状这一维已经不参与摆放** (V1.28.0), 这里仍写 `NF_DEF_SHAPE` 只是
+ *       让 `g_tt` 里不留半套数据, 没人读它。
  */
 static void block_fill_defaults(void)
 {
@@ -216,7 +217,7 @@ static void block_fill_defaults(void)
         return;             /* 识别结果可用, 一个槽都不动 */
     }
 
-    printf("[COLLECT] (颜色,形状) 凑不齐 -> 已采集的槽整批走默认表\r\n");
+    printf("[COLLECT] 颜色 凑不齐 -> 已采集的槽整批走默认表\r\n");
 
     uint8_t k = 0u;
     for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++) {
@@ -235,18 +236,7 @@ static void block_fill_defaults(void)
     }
 }
 
-/* ================================================================
- * 奖杯名次排除法 (V1.26.4)
- *
- * 3 个奖杯的名次是 {1 冠军, 2 亚军, 3 季军} 的一个**排列** —— 互不重复。
- * 所以 g_tt.trophy[] 里**恰好只有一个 0** 时, 那个槽必是剩下的名次。
- *
- * 存在的理由: 视觉投票可能一票都没有 (NX 没回 / 帧落在窗口外), 该槽就留 0
- * → SlotByTrophy() 返回 SLOT_NONE → PlaceDown 把那个名次的奖杯**整件跳过**。
- *
- * @note 前提是 3 个奖杯都进了槽。少进一个时采集时序本来就已经乱了
- *       (那个 continue 会连夹紧和转盘推进一起跳掉), 这里不再单独判。
- * ================================================================ */
+
 static void trophy_fill_missing(void)
 {
     uint8_t miss = 3u;   /* 名次未定的槽下标; 3 = 没有 */
@@ -302,18 +292,20 @@ static void collect_slots(void)
         for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++)
         {
             if (wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
+                /* 顺序不能反 (V1.28.0): identify_slot() 里第一件事就是
+                 * BlockBasic_GripperRaw(slot) —— 读夹爪**当前**位置, 而形状判定的
+                 * 前提就是"夹紧状态下回读"(见 block_basic.c 的 Slot_Shape[] 注释)。
+                 * 夹紧放后面 → raw 读到的是松开时的空程位置, g_tt.raw_angle 和
+                 * 那行 `slot=..raw=..` 日志全废, 阈值再也没法标定。
+                 * 而且 MSP_Color_Vote() 要在里面等 MSP_COLOR_VOTE_MS, 那段时间
+                 * 物块必须已经被夹住。 */
                 (void)BlockBasic_GripperClamp(slot);
                 identify_slot(slot);
             } else {
                 printf("[COLLECT] slot %u: no block, skip\r\n", (unsigned)slot);
             }
 
-            /* 转盘推进 / 关门**不管漏没漏料都要做** (V1.27.0)。
-             *
-             * 原先是 `continue`, 把这一句一起跳掉了 —— 漏一个物块, 转盘就停在
-             * 上一槽, 之后所有槽**错位一位**: 夹的是上一槽的位置, 记的却是下一槽
-             * 的槽号。收集结果整批被污染, 摆放阶段就再也对不上 T1[] 了。
-             * 漏料只该让**这一个槽**没有数据, 不该动后面的槽。 */
+
             if (slot < BLOCK_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
