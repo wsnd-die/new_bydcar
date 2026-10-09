@@ -33,6 +33,7 @@
 #include "servo_scs.h"
 #include "NX_uart.h"
 #include "block_basic.h"
+#include "ws2812.h"
 #include "mecanum.h"
 #include "Send_motor.h"
 #include "worker_task.h"
@@ -103,7 +104,7 @@ const osThreadAttr_t gripper_attributes = {
 osThreadId_t FC_TASKHandle;
 const osThreadAttr_t FC_TASK_attributes = {
   .name = "FC_TASK",
-  .priority = (osPriority_t) osPriorityNormal3,
+  .priority = (osPriority_t) osPriorityLow,
   .stack_size = 256 * 4
 };
 /* Definitions for NLF_TASK */
@@ -323,30 +324,11 @@ void ops9imu_fuction(void *argument)
 /* USER CODE END Header_gripper_task */
 void gripper_task(void *argument)
 {
-  if (!SCS_BusInit()) {
-    printf("[scs] bus init FAIL: huart5 not initialized\r\n");
-    for (;;) { osDelay(100); }
-  }
-  while (!BPlace_SetZero());
-  BlockBasic_LiftSync(0.0f);      /* 压限位归零 → 软件高度同步成 0 (之后用绝对高度指令) */
-  printf("[scs] init SUCSESS: huart5 initialized\r\n");
-  BlockBasic_TurntableTo(1);
-  Servo_SetAngle(127);
-  for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
-    servo_set_pos(id, SCS_OPEN);
-    // BlockBasic_TurntableTo(SERVO_ID_SCS0009_MAX-id);
-    // osDelay(100);
-  }
-  // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
-
-  BlockBasic_LiftToAbs(4.0f);     /* 夹爪初始化抬到 4mm */
-  printf("[scs] gripper init done\r\n");
-  for (;;)
+  /* USER CODE BEGIN gripper_task */
+  /* Infinite loop */
+  for(;;)
   {
-    BlockCollect_Poll();
-    // printf("%d,%d\r\n",IR_ObjectEntered(),IR_ObjectPresent());
-    MSP_Color_DebugPoll();
-    osDelay(20);
+    osDelay(1);
   }
   /* USER CODE END gripper_task */
 }
@@ -386,6 +368,8 @@ void NLF_TASK(void *argument)
   /* USER CODE BEGIN NLF_TASK */
   /* Infinite loop */
  // Nav_GoToWorld(1.0f,0,0);
+  WS2812_AllWhite();
+  //WS2812_AllOff();
   for(;;)
   {
   NLF_Fuction();
