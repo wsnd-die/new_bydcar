@@ -108,6 +108,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   MX_I2C3_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
 
   fdcan2_UserInit();
