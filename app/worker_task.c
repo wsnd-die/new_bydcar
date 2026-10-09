@@ -13,6 +13,7 @@
 #include "arc_path.h"
 #include "banyuntask.h"
 #include "worker_task.h"
+#include "ws2812.h"
 
 #include "../uart/NX_uart.h"
 
@@ -685,6 +686,7 @@ void NLF_RunFlow(SystemMode_t mode)
 
         case Event_Collect_L:
             /* 物块采集: 圆锥 + 槽 2~5 夹取 + 读形状/颜色, 结果写进 g_tt */
+            WS2812_AllOff();
             NF_Stage_Collect(COLLECT_BLOCK);
             break;
 
@@ -694,14 +696,17 @@ void NLF_RunFlow(SystemMode_t mode)
             break;
 
         case Event_FindCircle:
+            WS2812_AllWhite();
             NF_Stage_FindCircle();
             break;
 
         case Event_PlaceDown:
+            WS2812_AllWhite();
             NF_Stage_PlaceDown();
             break;
 
         case Event_GoHome:
+            WS2812_AllOff();
             NF_Stage_GoHome();
             break;
 
