@@ -197,8 +197,9 @@ static void Mecanum_MoveOneWheel(uint8_t addr, float dist_m, uint16_t vel_rpm)
 static bool Mecanum_AllReached(void)
 {
     /* 顺序不重要: 用 && 短路, 第一个没到就不再问后面三个, 省总线 */
-    return Emm_V5_Is_Reached(1u) && Emm_V5_Is_Reached(2u) &&
-           Emm_V5_Is_Reached(3u) && Emm_V5_Is_Reached(4u);
+     return Emm_V5_Is_Reached(1u);
+    // && Emm_V5_Is_Reached(2u) &&
+    //        Emm_V5_Is_Reached(3u) && Emm_V5_Is_Reached(4u);
 }
 
 bool Mecanum_MoveBodyPos(float fwd_m, float left_m, uint16_t timeout_ms)

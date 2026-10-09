@@ -64,9 +64,4 @@ bool Collect_WaitEnter(void)
     return true;
 }
 
-/* V1.20.0 删除: Collect_ReadColor() / Collect_ReadColor_NB() / Collect_WaitObject()。
- * 三者读的是 GY-33 颜色传感器的 g_uart2_gy33_* 全局量, 而那些变量的定义只存在于
- * hardware/bus/uart2_tbop10.c 的**注释**里 (整个文件被注释掉了)。它们能过编译
- * 只是因为当时无人调用、被 --gc-sections 整段丢掉 —— 一旦被引用就链接失败。
- * 颜色改由 MSP 芯片经 USART2 回传, 见 hardware/sensors/msp_color.c。 */
 
