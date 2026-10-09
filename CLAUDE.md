@@ -362,8 +362,7 @@ active_locator->get_pose(&robot_pose);
 
 | 版本 | 日期 | 摘要 | 记录 |
 |---|---|---|---|
-| V1.29.0 | 2026-10-10 | 新增：**WS2812 灯珠驱动（PB4 → TIM16_CH1 + DMA 半字流）** —— 位流由 TIM16(≈802kHz) + DMA 逐周期搬 CCR1 编码 0/1；帧前/后各 100 全低周期复位/锁存；API 仅 `WS2812_AllWhite()`/`WS2812_AllOff()`；⚠ 需 CubeMX 把 PB4 从 TIM3_CH1 改 TIM16_CH1 并加 TIM16_CH1 DMA（半字/Normal/开中断），否则 htim16 未定义编译不过；PB0 限位不动 | [2026-10-10](clauderecord/2026-10-10.md) |
-| V1.29.1 | 2026-10-10 | 修复：**TIM16_CH1 DMA 外设地址递增误开** —— `PeriphInc=ENABLE` 使位流写穿 CCR1 一路写进 BDTR（MOE 被关），灯带收乱数据（实测 8 灯亮 4 个、颜色随机）；改 `DMA_PINC_DISABLE`（tim.c 与 .ioc 同步，重生成不丢）；`WS2812_LED_NUM` 10→8 | [2026-10-10](clauderecord/2026-10-10.md) |
+| V1.29.0 | 2026-10-09 | 新增：**圆弧"采集完成即收尾"** —— `Nav_Cricle()` 主循环加 `if (BlockCollect_IsDone()) break;`，采集在 `gripper_task` 里先跑完时车不必再跑满 170° 弧，`break` 后走原出口 `NLF_Request(Event_Navigation)` 直接进导航；**顺带删掉一段恒假残码**（上一版用函数内局部 `volatile bool s_done = false;` 当判据，无人赋值 → 分支永不进入且不报错） | [2026-10-09](clauderecord/2026-10-09.md) |
 | V1.26.7 | 2026-10-07 | 新增：**颜色采集改为窗口内投票** —— 新增 `MSP_Color_Vote(window_ms,&out)`：窗口内收到的帧**全部计入票**取多数，一票没有才走兜底表；**不预先丢残留帧**（调用点在转盘已停在槽 N、物块进来之后，手上那帧就是本槽的，丢掉反而要再等一周期 —— 这正是"四个槽随机挂两个"的来源，原来窗口只有 300ms）。`MSP_COLOR_VOTE_MS` 初值 600ms ★待实测。`MSP_Color_Wait()` 保留不删 | [2026-10-07](clauderecord/2026-10-07.md) |
 | V1.26.8 | 2026-10-07 | 新增：**调试打印颜色 + RGB** —— `FC_TASK` 循环里 `MSP_Color_Take()` 后加一行 `MSP_Color_DebugPoll()`（驱动未改）；⚠ `Take` 会抢 `pending`，跑流程前须摘掉 | [2026-10-07](clauderecord/2026-10-07.md) |
 | V1.27.0 | 2026-10-07 | 修改：**物块摆放识别兜底 + 漏料不卡流程** —— `TT_SeekBlock()` 搜不到时**游标照样推进**（原先停原地，一个组合会把后面所有 FindCircle 轮次全吃掉）；新增 `TT_BlocksCoverTable()` + `block_fill_defaults()`，组合凑不齐就把已采集的槽整批改默认表；采集循环里"转盘推进"移出 `if`，漏料不再让后面各槽错位一位 | [2026-10-07](clauderecord/2026-10-07.md) |

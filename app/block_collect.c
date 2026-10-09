@@ -30,7 +30,7 @@
 
 static volatile bool s_req     = false;   /* 有采集请求待处理 */
 static volatile bool s_running = false;
-static volatile bool s_done    = false;
+extern volatile bool s_done    = false;
 
 /** 本次采集跑哪条分支。由 BlockCollect_SetStage() 设定, 不自动翻转。 */
 static volatile BlockCollectStage_t s_stage = COLLECT_BLOCK;
@@ -292,13 +292,7 @@ static void collect_slots(void)
         for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++)
         {
             if (wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
-                /* 顺序不能反 (V1.28.0): identify_slot() 里第一件事就是
-                 * BlockBasic_GripperRaw(slot) —— 读夹爪**当前**位置, 而形状判定的
-                 * 前提就是"夹紧状态下回读"(见 block_basic.c 的 Slot_Shape[] 注释)。
-                 * 夹紧放后面 → raw 读到的是松开时的空程位置, g_tt.raw_angle 和
-                 * 那行 `slot=..raw=..` 日志全废, 阈值再也没法标定。
-                 * 而且 MSP_Color_Vote() 要在里面等 MSP_COLOR_VOTE_MS, 那段时间
-                 * 物块必须已经被夹住。 */
+
                 (void)BlockBasic_GripperClamp(slot);
                 identify_slot(slot);
             } else {
@@ -339,7 +333,7 @@ static void collect_slots(void)
                        (unsigned)slot, (unsigned)NX_GetTrophyCount());
             }
 
-            osDelay(100);
+            osDelay(40);
             if (slot < TROPHY_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {

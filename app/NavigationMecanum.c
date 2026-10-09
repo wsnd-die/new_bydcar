@@ -7,6 +7,7 @@
 #include "ops9_g491_uart3.h"      /* extern const LocatorDev_t locator_ops9 */
 #include "pose_data.h"            /* PoseData_t */
 #include <math.h>
+#include "block_collect.h"
 
 #include "block_basic.h"
 #include "Send_motor.h"           /* Send_commandmotor (下游执行器) */
@@ -38,11 +39,11 @@ World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   0.930956f, 0.113929f,-0.673924f }, /* 14 摆放c 点 */
     {   0.936404f, 0.415504f, 0.818769f }, /* 15 摆放a 点 */
     // {   0.660611f, 0.167082f, 0.855780f }, /* 16 摆放b 点 */
-    {0.01f,0.03f,0.0f}
+
 
 };
 
-uint8_t g_waypoint_count = 11u;
+uint8_t g_waypoint_count = 10u;
 
 /* ==================================================================
  * V1.23.0: 路线段打断
@@ -213,10 +214,10 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
      *    NAV_XY_PROFILE=0 时退回旧的位置 PD, 方便 A/B 对比。 */
 #if !NAV_XY_PROFILE
     pid_type_def pid_x, pid_y;
-    fp32 k_x[3] = {2.3f, 0.0f, 0.91f};
-    PID_init(&pid_x, PID_POSITION, k_x, NAV_VMAX_XY, 0.0f);
-    fp32 k_y[3] = {1.3f, 0.0f, 0.91f};
-    PID_init(&pid_y, PID_POSITION, k_y, NAV_VMAX_XY, 0.0f);
+    fp32 k_x[3] = {2.3f, 0.0f, 2.91f};
+    PID_init(&pid_x, PID_POSITION, k_x, NAV_VMAX_X, 0.0f);
+    fp32 k_y[3] = {2.3f, 0.0f, 2.91f};
+    PID_init(&pid_y, PID_POSITION, k_y, NAV_VMAX_Y, 0.0f);
 #endif
 
     /* 3. 软启动斜坡状态 (世界系) */
@@ -226,10 +227,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     uint8_t  arrive  = 0u;   /* 连续到达 tick 数 */
     uint8_t  invalid = 0u;   /* 反馈连续无效 tick 数 */
 
-    /* 控制周期实测 (V1.25.4): NAV_DT=0.01 只是**名义值**, 真实一拍 =
-     * osDelay(NAV_LOOP_TICKS) + Send_commandmotor() 内的 osDelay(5) + 计算耗时。
-     * NAV_Ramp 的加速度限幅 (`acc * NAV_DT`) 用的是名义值 → 实际加/减速会比
-     * 设定值小。这里只累计, 出循环时打一行, 不占循环时间。 */
+
     uint8_t  dt_armed = 0u;
     uint32_t t_prev   = 0u;
     uint32_t dt_sum   = 0u, dt_n = 0u;
@@ -503,7 +501,7 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
     BlockBasic_LiftToAbs(0);
     /* 1. 借走电机控制权 (与 Nav_GoToWorld 同契约, 退出不恢复角度环) */
     g_angle_ctrl_enable = 0;
-    osDelay(20);
+    osDelay(10);
 
     /* 2. 起点位姿 → 圆心。左弧圆心 = 车左侧 R 处; 右弧 = 右侧 R 处。 */
     PoseData_t pose;
@@ -534,13 +532,12 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
     {
         locator_ops9.get_pose(&pose);
 
-        /* V1.23.0 打断: 外部 (IR 进料) 要求立刻收尾 */
-        // if (g_route_abort)
-        // {
-        //     g_route_abort = 0u;
-        //     printf("[NAV-ARC] ABORT swept=%.3f rad\r\n", swept);
-        //     break;
-        // }
+
+        if (BlockCollect_IsDone())
+        {
+            printf("[NAV-ARC] ABORT 采集完成 swept=%.3f rad\r\n", swept);
+            break;
+        }
 
         if (!pose.valid)
         {

@@ -442,12 +442,12 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
                 TT_RotateByQR();
                 osDelay(200);
                 BlockBasic_GripperRelease(TT_CurrentSlot());
-                osDelay(100);
                 /* 后退 0.05 m (车体 -X 方向) */
+                BlockBasic_LiftTo(DOWN, abs(height));
                 if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
                     printf("[PLACE] 后退没等齐到位 (超时)\r\n");
                 }
-                BlockBasic_LiftTo(DOWN, abs(height));
+
             }
         }
 

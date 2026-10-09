@@ -180,7 +180,7 @@ static const Jang_type NF_RANK[NF_RANK_COUNT] = {
  * 摆放阶段已改成反查 g_tt.trophy[] (见 ColorIdentif.c 的 SlotByTrophy)。 */
 
 /** 各奖杯放置时的丝杆高度 (mm)。。 */
-static const int16_t NF_PLACE_HEIGHT[4] = { 0u, -5u, -4u, -5u };
+static const int16_t NF_PLACE_HEIGHT[4] = { 0u, -6u, -5u, -5u };
 
 /** 五个槽位里实际放的物块颜色。
  *  ★ NX 接入点: 换成 NX 回传的「收集到的颜色物块」。
@@ -395,7 +395,7 @@ static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
  * "完全进入"进料口为止。距离和时长两道限幅, 蹭不进去也不会一直顶着。
  * ================================================================== */
 #define NF_CREEP_FWD_M       0.19f    /* 前进距离上限 (m) —— 第一道限幅 */
-#define NF_CREEP_VMPS        0.4f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
+#define NF_CREEP_VMPS        0.5f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
 #define NF_CREEP_TIMEOUT_MS  2300u    /* 总时长上限 (ms) —— 第二道限幅 */
 #define NF_CREEP_TICK_MS     10u      /* 蹭的控制周期 (ms) */
 
@@ -476,10 +476,10 @@ static void NF_Stage_Navigation(void)
                (int)next, (unsigned)s_stage_idx, (unsigned)s_stage_left);
         NLF_Request(next);
     } else {
-        Servo_SetAngle(127);
         printf("[FLOW] all stages done -> GoHome\r\n");
         AG_Stop();
         NLF_Request(Event_GoHome);
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 127.0f / 180 * 2000 + 500);
     }
 }
 
@@ -595,7 +595,7 @@ static void NF_Stage_PlaceDown(void)
 
         if (rank == third_place) {
             BlockBasic_LiftToAbs(8.0f);    /* 季军预下降: 降到 5mm (等价原 DOWN,33: 38-33) */
-            osDelay(300);
+            osDelay(170);
         }
         BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
@@ -619,7 +619,7 @@ static void NF_Stage_PlaceDown(void)
 
     if (rank == second_place) {
         BlockBasic_LiftToAbs(48.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
-        osDelay(400);
+        osDelay(250);
     }
 
     s_place_idx++;
@@ -663,9 +663,9 @@ static void NF_Stage_GoHome(void)
     g_route_abort = 0u;
 
     if (g_waypoint_count > 0u) {
-        const World_Dir_t *home = &g_waypoints[g_waypoint_count - 1u];
-        (void)Nav_GoToWorld(home->x, home->y, home->yaw);
+        (void)Nav_GoToWorld(0.0f, 0.0f ,0.0f);
     }
+
     AG_Stop();
 }
 
