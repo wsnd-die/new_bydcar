@@ -57,6 +57,7 @@ uint32_t malu_cm_topluse_s(float cm);
 
 /** 位置模式速度, 单位 RPM。★实测调。 */
 #define MEC_POS_VEL_RPM   220u
+#define MEC_POS_VELh_RPM   300u
 /** 加减速, 0~255; 0 = 不控加速度直冲最高速。★实测调。 */
 #define MEC_POS_ACC       190u
 /** 小于这个位移 (m) 就当没动, 不发指令。 */

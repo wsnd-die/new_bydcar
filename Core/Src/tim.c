@@ -99,7 +99,7 @@ void MX_TIM16_Init(void)
   htim16.Instance = TIM16;
   htim16.Init.Prescaler = 0;
   htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim16.Init.Period = 211;
+  htim16.Init.Period = 212;
   htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim16.Init.RepetitionCounter = 0;
   htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -221,6 +221,10 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef* timHandle)
     PB4     ------> TIM16_CH1
     */
     GPIO_InitStruct.Pin = GPIO_PIN_4;
+    /* ⚠ **推挽**，跟能正常工作的 F103 参照工程 (D:\Desktop\WS2812) 一致。
+     * 不要改成开漏：开漏时上升沿靠外部上拉电阻 RC 充电，"0" 位元只有 292ns
+     * 高电平，短脉宽可能充不到灯珠门限 → 整个位流被读成 0 → 什么都不显示。
+     * 推挽是 3.3V 直驱，参照工程证明对这条灯带够用。 */
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;

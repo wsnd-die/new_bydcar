@@ -13,7 +13,6 @@
 #include "arc_path.h"
 #include "banyuntask.h"
 #include "worker_task.h"
-#include "ws2812.h"
 
 #include "../uart/NX_uart.h"
 
@@ -24,6 +23,7 @@
 #include "block_basic.h"         /* Place / BlockBasic_TurntableTo / BlockBasic_LiftTo */
 #include "collect_ir.h"          /* IR_ObjectPresent —— 蹭料用 (不能用 IR_ObjectEntered, 见 NF_CreepForward) */
 #include "drv_wheel_odom.h"      /* Wheel_Odom_Reset (旧代码的 World_Reset) */
+#include "ws2812.h"
 
 volatile uint8_t g_angle_ctrl_enable = 0;    /* 1 = 打开角度环 */
 volatile float   g_angle_target_yaw  = 0.0f; /* 目标航向 (deg), 与 g_hwt_imu_yaw 同量纲 */
@@ -541,7 +541,7 @@ static void NF_Stage_FindCircle(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-
+    BlockBasic_TurntableTo(CONE_SLOT);
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
         Circle_Follow();
@@ -553,7 +553,7 @@ static void NF_Stage_FindCircle(void)
             NLF_Request(Event_Navigation);
             return;
         }
-        osDelay(10);
+        osDelay(5);
     }
 
     if (TT_RotateByQR()) {
@@ -686,7 +686,6 @@ void NLF_RunFlow(SystemMode_t mode)
 
         case Event_Collect_L:
             /* 物块采集: 圆锥 + 槽 2~5 夹取 + 读形状/颜色, 结果写进 g_tt */
-            WS2812_AllOff();
             NF_Stage_Collect(COLLECT_BLOCK);
             break;
 
@@ -696,17 +695,14 @@ void NLF_RunFlow(SystemMode_t mode)
             break;
 
         case Event_FindCircle:
-            WS2812_AllWhite();
             NF_Stage_FindCircle();
             break;
 
         case Event_PlaceDown:
-            WS2812_AllWhite();
             NF_Stage_PlaceDown();
             break;
 
         case Event_GoHome:
-            WS2812_AllOff();
             NF_Stage_GoHome();
             break;
 

@@ -403,13 +403,12 @@ void Servo_SetAngle(float Angle)
 
 /** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
-#define PLACE_MOVE_TIMEOUT_MS   1200u
+#define PLACE_MOVE_TIMEOUT_MS   600u
 
 void Place(char dir,float x,float y,int16_t height,uint8_t slot)
 {
     if (dir == 'O')
     {
-
         float fwd  = 0.072f - y * PLACE_CIRCLE_SCALE_M;
         float left = 0.005f + x * PLACE_CIRCLE_SCALE_M;
 
@@ -421,7 +420,6 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
         if (height <=0)
         {
             BlockBasic_LiftTo(DOWN, abs(height));
-            osDelay(200);
             /* 后退 0.05 m (车体 -X 方向) */
             if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
                 printf("[PLACE] 后退没等齐到位 (超时)\r\n");
@@ -438,15 +436,16 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
             else
             {
                 BlockBasic_LiftTo(UP, abs(height));
-                osDelay(670);
+                osDelay(650);
                 TT_RotateByQR();
-                osDelay(200);
+                osDelay(250);
                 BlockBasic_GripperRelease(TT_CurrentSlot());
+                osDelay(120);
                 /* 后退 0.05 m (车体 -X 方向) */
-                BlockBasic_LiftTo(DOWN, abs(height));
                 if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
                     printf("[PLACE] 后退没等齐到位 (超时)\r\n");
                 }
+                BlockBasic_LiftTo(DOWN, abs(height));
 
             }
         }

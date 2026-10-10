@@ -104,7 +104,7 @@ const osThreadAttr_t gripper_attributes = {
 osThreadId_t FC_TASKHandle;
 const osThreadAttr_t FC_TASK_attributes = {
   .name = "FC_TASK",
-  .priority = (osPriority_t) osPriorityNormal3,
+  .priority = (osPriority_t) osPriorityLow,
   .stack_size = 256 * 4
 };
 /* Definitions for NLF_TASK */
@@ -168,6 +168,8 @@ void MX_FREERTOS_Init(void) {
    * 接收却没重挂。 */
   MSP_Color_Init();
   HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_4);
+
+
 
   /* USER CODE END Init */
 
@@ -324,6 +326,8 @@ void ops9imu_fuction(void *argument)
 /* USER CODE END Header_gripper_task */
 void gripper_task(void *argument)
 {
+  /* USER CODE BEGIN gripper_task */
+  /* Infinite loop */
   if (!SCS_BusInit()) {
     printf("[scs] bus init FAIL: huart5 not initialized\r\n");
     for (;;) { osDelay(100); }
@@ -340,14 +344,14 @@ void gripper_task(void *argument)
   }
   // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
 
-  BlockBasic_LiftToAbs(5.0f);     /* 夹爪初始化抬到 4mm */
+  BlockBasic_LiftToAbs(4.0f);     /* 夹爪初始化抬到 4mm */
   printf("[scs] gripper init done\r\n");
   for (;;)
   {
     BlockCollect_Poll();
     // printf("%d,%d\r\n",IR_ObjectEntered(),IR_ObjectPresent());
     MSP_Color_DebugPoll();
-    osDelay(20);
+    osDelay(10);
   }
   /* USER CODE END gripper_task */
 }
@@ -369,6 +373,15 @@ void FC_TASK(void *argument)
   for(;;)
   {
     // FC_Fuction();
+    {
+      static const uint32_t tab[4] = { 0xFF0000u, 0x00FF00u, 0x0000FFu, 0xFFFFFFu };
+      static uint8_t  s_idx = 0u;
+      static uint16_t s_div = 0u;
+
+      ws2812_set_all(tab[s_idx]);
+      ws2812_update();
+      if (++s_div >= 50u) { s_div = 0u; s_idx = (uint8_t)((s_idx + 1u) % 4u); }
+    }
     MSP_Color_DebugPoll();      /* 打印 [MSP-RX] color='r' rgb_raw="2003040" */
     osDelay(10);
   }
@@ -387,10 +400,10 @@ void NLF_TASK(void *argument)
   /* USER CODE BEGIN NLF_TASK */
   /* Infinite loop */
  // Nav_GoToWorld(1.0f,0,0);
-   WS2812_AllOff();
+
   for(;;)
   {
-  NLF_Fuction(); 
+  NLF_Fuction();
     // Nav_GoToWorld(0,0,0);
     osDelay(10);
   }

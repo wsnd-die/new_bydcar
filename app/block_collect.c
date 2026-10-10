@@ -287,6 +287,7 @@ static void collect_slots(void)
             printf("[COLLECT] no cone, abort\r\n");
         }
 
+
         (void)BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
 
         for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++)
@@ -304,6 +305,7 @@ static void collect_slots(void)
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
                 Servo_Angle(BLOCK_CLOSE_DOOR);
+                (void)BlockBasic_GripperClamp(CONE_SLOT);
             }
         }
 

@@ -209,12 +209,20 @@ bool Mecanum_MoveBodyPos(float fwd_m, float left_m, uint16_t timeout_ms)
     const float fr = fwd_m + left_m;
     const float rl = fwd_m + left_m;
     const float rr = fwd_m - left_m;
-
+if (fwd_m>=0)
+{
     Mecanum_MoveOneWheel(1u, fr, MEC_POS_VEL_RPM);   /* 前右 */
     Mecanum_MoveOneWheel(2u, rl, MEC_POS_VEL_RPM);   /* 后左 */
     Mecanum_MoveOneWheel(3u, fl, MEC_POS_VEL_RPM);   /* 前左 */
     Mecanum_MoveOneWheel(4u, rr, MEC_POS_VEL_RPM);   /* 后右 */
-
+}
+    else
+    {
+        Mecanum_MoveOneWheel(1u, fr, MEC_POS_VELh_RPM);   /* 前右 */
+        Mecanum_MoveOneWheel(2u, rl, MEC_POS_VELh_RPM);   /* 后左 */
+        Mecanum_MoveOneWheel(3u, fl, MEC_POS_VELh_RPM);   /* 前左 */
+        Mecanum_MoveOneWheel(4u, rr, MEC_POS_VELh_RPM);   /* 后右 */
+    }
     if (timeout_ms == 0u) {
         return true;            /* 调用方说不用等 */
     }
