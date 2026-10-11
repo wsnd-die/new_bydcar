@@ -230,7 +230,7 @@ bool BlockBasic_LiftToAbs(float target_mm)
 
     /* 方向编码沿用旧 API: 上行 = 0, 下行 = 1 (见下面 BlockBasic_LiftTo 的实际行为,
      * 注意它上面的注释里"0=下降"是**写反了**的 —— 枚举里 UP = 0) */
-    Emm_V5_Pos_Control(5, (delta > 0.0f) ? 0u : 1u, 1600, 0, pulse, 0, 0);
+    Emm_V5_Pos_Control(5, (delta > 0.0f) ? 0u : 1u, 5000, 0, pulse, 0, 0);
     return true;
 #endif
 }
@@ -275,11 +275,11 @@ float BlockBasic_LiftTo(uint8_t dir, float pos)
         uint32_t pulse = (uint32_t)(pos * BLOCK_STEPPER_PULSE_PER_MM);
         if (dir == 0)
         {
-            Emm_V5_Pos_Control(5, 0, 3000, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 0, 5000, 0, pulse, 0, 0);
         }
         else
         {
-            Emm_V5_Pos_Control(5, 1, 3000, 0, pulse, 0, 0);
+            Emm_V5_Pos_Control(5, 1, 5000, 0, pulse, 0, 0);
         }
         return 0.0f;
     }
@@ -409,8 +409,8 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
 {
     if (dir == 'O')
     {
-        float fwd  = 0.072f - y * PLACE_CIRCLE_SCALE_M;
-        float left = 0.005f + x * PLACE_CIRCLE_SCALE_M;
+        float fwd  = 0.072f + y * PLACE_CIRCLE_SCALE_M;
+        float left = 0.0037f + x * PLACE_CIRCLE_SCALE_M;
 
 
         if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
@@ -420,6 +420,7 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
         if (height <=0)
         {
             BlockBasic_LiftTo(DOWN, abs(height));
+            osDelay(100);
             /* 后退 0.05 m (车体 -X 方向) */
             if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
                 printf("[PLACE] 后退没等齐到位 (超时)\r\n");
@@ -438,15 +439,14 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
                 BlockBasic_LiftTo(UP, abs(height));
                 osDelay(650);
                 TT_RotateByQR();
-                osDelay(250);
+                osDelay(290);
                 BlockBasic_GripperRelease(TT_CurrentSlot());
-                osDelay(120);
+                osDelay(30);
                 /* 后退 0.05 m (车体 -X 方向) */
                 if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
                     printf("[PLACE] 后退没等齐到位 (超时)\r\n");
                 }
                 BlockBasic_LiftTo(DOWN, abs(height));
-
             }
         }
 

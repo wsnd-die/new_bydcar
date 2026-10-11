@@ -14,15 +14,16 @@
 float g_circle_vx = 0.0f;
 float g_circle_vy = 0.0f;
 char  g_circle_dir = '?';
-float g_circle_speed = 1.0f;  /* 速度系数: 1.0=快(左侧), 0.4=慢(右侧) */
 
-/* 按 xy 圆心偏差分档调速: 远(>20px)快速接近, 近(≤20px)慢速微调 */
-#define CIRCLE_XY_FAST_TH   10.0f   /* 偏差阈值 (像素) */
-#define CIRCLE_XY_V_FAST    0.0012f   /* 远距离速度 (m/s) */
-#define CIRCLE_XY_V_SLOW    0.0005f   /* 近距离速度 (m/s) */
+float g_circle_k = 0.0f;
+
+
+#define CIRCLE_XY_FAST_TH   15.0f   /* 偏差阈值 (像素) */
+#define CIRCLE_XY_V_FAST    0.0029f   /* 系数: 偏差 > 10px 时 (m/s per px) */
+#define CIRCLE_XY_V_SLOW    0.00085f   /* 系数: 偏差 ≤ 10px 时 (m/s per px) */
 
 /* 找圆稳定: 连续 'O' 确认次数, 达到才认为已居中, 防止方向抖动误判/一直动 */
-#define CIRCLE_O_STABLE_CNT  4U
+#define CIRCLE_O_STABLE_CNT  3U
 static uint8_t s_o_cnt = 0U;
 static float s_sum_x = 0.0f;   /* 确认期间圆心偏差累加 */
 static float s_sum_y = 0.0f;
@@ -38,7 +39,6 @@ float g_circle_avg_y = 0.0f;
 
 void Circle_Follow(void)
 {
-    static uint8_t Dir_flag=0;
     char dir = s_last_dir;   /* 默认保持上次方向 */
     MecanumResult motor;
     float cx = 0.0f, cy = 0.0f;
@@ -48,11 +48,7 @@ void Circle_Follow(void)
         s_last_dir = dir;
     }
 
-    /* ---- 1.4 读圆心偏差 → 分档调速 (远>20px快, 近≤20px慢) ----
-     * NX_GetCirclepos() 是**消费式**的 (V1.25.6): 无新帧返回 false 且**不写出参**。
-     * 所以这里必须判返回值并保持上次值 —— 否则"无新帧的那些拍" cx/cy 会停在
-     * 本函数开头重置的 0, dist 恒 0 → 分档调速一直判成慢速。写法与上面 dir 的
-     * s_last_dir 同款。 */
+
     if (NX_GetCirclepos(&cx, &cy)) {
         s_last_cx = cx;
         s_last_cy = cy;
@@ -62,39 +58,26 @@ void Circle_Follow(void)
     }
     {
         float dist = sqrtf(cx*cx + cy*cy);
-        g_circle_speed = (dist > CIRCLE_XY_FAST_TH) ? CIRCLE_XY_V_FAST : CIRCLE_XY_V_SLOW;
+        g_circle_k = (dist > CIRCLE_XY_FAST_TH) ? CIRCLE_XY_V_FAST : CIRCLE_XY_V_SLOW;
         // printf("%f\r\n",dist);
     }
 
-
-
-    /* ---- 1.5 稳定确认: 连续 N 次 'O' 才确认居中 ----
-     * 确认期间 g_circle_dir 置 ' '(不触发放置), 车保持静止,
-     * 避免 'O' 抖动导致车一会停一会动 / 误判提前放置 */
     if (dir == 'O') {
-        if (Dir_flag!=0) {
-            s_sum_x += cx;
-            s_sum_y += cy;
-        }
+        s_sum_x += cx;
+        s_sum_y += cy;
+        s_o_cnt++;
 
-        if (Dir_flag==0) {
-            Dir_flag=1;
-        }
-
-        if (s_o_cnt < CIRCLE_O_STABLE_CNT) s_o_cnt++;
         if (s_o_cnt >= CIRCLE_O_STABLE_CNT) {
-            Dir_flag=0;
-            s_o_cnt = 0;
+            g_circle_avg_x = s_sum_x / (float)s_o_cnt;   /* ← 先算平均 */
+            g_circle_avg_y = s_sum_y / (float)s_o_cnt;
+            g_circle_dir   = 'O';
+            s_o_cnt = 0;                                 /* ← 再清零 */
             s_sum_x = 0.0f;
-            s_sum_y = 0.0f; 
-            g_circle_dir = 'O';
-            g_circle_avg_x = s_sum_x / (float)CIRCLE_O_STABLE_CNT;   /* 平均偏差 */
-            g_circle_avg_y = s_sum_y / (float)CIRCLE_O_STABLE_CNT;
+            s_sum_y = 0.0f;
         } else {
             g_circle_dir = ' ';
         }
     } else {
-        Dir_flag=0;
         s_o_cnt = 0;
         s_sum_x = 0.0f;
         s_sum_y = 0.0f;
@@ -105,8 +88,8 @@ void Circle_Follow(void)
   */
 
 
-        g_circle_vx=cy*g_circle_speed;
-        g_circle_vy= cx*g_circle_speed;
+        g_circle_vx=cy*g_circle_k;
+        g_circle_vy= cx*g_circle_k;
 
     if (dir == 'O') {
         g_circle_vx=0;
@@ -122,26 +105,26 @@ void Circle_Follow(void)
     //
     // case 'N':
     //     /* 圆心偏上: 前进 */
-    //     g_circle_vx = g_circle_speed;
+    //     g_circle_vx = g_circle_k;
     //     g_circle_vy = 0.0f;
     //     break;
     //
     // case 'S':
     //     /* 圆心偏下: 后退 */
-    //     g_circle_vx = -g_circle_speed;
+    //     g_circle_vx = -g_circle_k;
     //     g_circle_vy = 0.0f;
     //     break;
     //
     // case 'W':
     //     /* 圆心偏右: 右移 */
     //     g_circle_vx = 0.0f;
-    //     g_circle_vy = g_circle_speed;
+    //     g_circle_vy = g_circle_k;
     //     break;
     //
     // case 'E':
     //     /* 圆心偏左: 左移 */
     //     g_circle_vx = 0.0f;
-    //     g_circle_vy = -g_circle_speed;
+    //     g_circle_vy = -g_circle_k;
     //     break;
     //
     // default:
@@ -149,9 +132,7 @@ void Circle_Follow(void)
     //     break;
     // }
 
-    /* ---- 3. 全向移动解算 (vx, vy, w=0) ---- */
     motor = Mecanum_Calc_Full_V(g_circle_vx, g_circle_vy, 0.0f);
 
-    /* ---- 4. 发送电机指令 ---- */
     Send_commandmotor(&motor);
 }

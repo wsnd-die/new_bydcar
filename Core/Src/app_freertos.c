@@ -350,8 +350,8 @@ void gripper_task(void *argument)
   {
     BlockCollect_Poll();
     // printf("%d,%d\r\n",IR_ObjectEntered(),IR_ObjectPresent());
-    MSP_Color_DebugPoll();
-    osDelay(10);
+    // MSP_Color_DebugPoll();
+    osDelay(5);
   }
   /* USER CODE END gripper_task */
 }
@@ -369,19 +369,15 @@ void FC_TASK(void *argument)
   NX_Init();
   NX_RequestMode(NX_MODE_YOLO);
   NX_ApplyMode();
+  ws2812_set_all(0xFFFFFF);
+  ws2812_update();
   /* Infinite loop */
   for(;;)
   {
     // FC_Fuction();
-    {
-      static const uint32_t tab[4] = { 0xFF0000u, 0x00FF00u, 0x0000FFu, 0xFFFFFFu };
-      static uint8_t  s_idx = 0u;
-      static uint16_t s_div = 0u;
 
-      ws2812_set_all(tab[s_idx]);
-      ws2812_update();
-      if (++s_div >= 50u) { s_div = 0u; s_idx = (uint8_t)((s_idx + 1u) % 4u); }
-    }
+
+
     MSP_Color_DebugPoll();      /* 打印 [MSP-RX] color='r' rgb_raw="2003040" */
     osDelay(10);
   }
@@ -454,7 +450,7 @@ uint8_t key_StartOK=0;
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
       // NLF_Request(Event_Collect_L);
       NLF_Request(Event_START);
-      Servo_SetAngle(40);
+      Servo_SetAngle(39);
       key_StartOK=1;
     }
 

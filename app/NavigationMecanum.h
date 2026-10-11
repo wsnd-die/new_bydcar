@@ -86,8 +86,8 @@ extern volatile uint8_t g_nav_running;
 #endif
 #define NAV_KP_X_LIN    7.3f
 #define NAV_KP_Y_LIN    7.3f
-#define NAV_KD_X_LIN    0.5f
-#define NAV_KD_Y_LIN    0.5f
+#define NAV_KD_X_LIN    0.4f
+#define NAV_KD_Y_LIN    0.4f
 #define NAV_BRK_X       0.8f
 #define NAV_BRK_Y       0.8f
 #define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
@@ -102,10 +102,10 @@ extern volatile uint8_t g_nav_running;
  *
  * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
-#define NAV_SWITCH_LO   0.25f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
-#define NAV_SWITCH_HI   0.5f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
-#define NAV_CREEP_X_V   0.48f   /* X 轴近场爬行速度上限 m/s */
-#define NAV_CREEP_Y_V   0.38f   /* Y 轴近场爬行速度上限 m/s */
+#define NAV_SWITCH_LO   0.3f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
+#define NAV_SWITCH_HI   0.55f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
+#define NAV_CREEP_X_V   0.4f   /* X 轴近场爬行速度上限 m/s */
+#define NAV_CREEP_Y_V   0.4f   /* Y 轴近场爬行速度上限 m/s */
 /* ★ 上面两个爬行上限**必须 < NAV_ARRIVE_VMAX**, 否则到位判据的 `|v| ≤ NAV_ARRIVE_VMAX`
  *   永远满足不了 —— 低速段 v 会收敛到爬行封顶值, 而封顶值比门限还大。 */
 
@@ -113,7 +113,7 @@ extern volatile uint8_t g_nav_running;
  * 圆弧导航 (Nav_Cricle) 参数 —— V1.26.0, OPS9 闭环
  * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
-#define NAV_ARC_V         0.5f    /* 圆弧线速度 m/s */
+#define NAV_ARC_V         0.55f    /* 圆弧线速度 m/s */
 #define NAV_ARC_ACC       0.8f     /* 线速度软启动加速度 m/s² */
 #define NAV_ARC_KP_R      1.2f     /* 径向误差修正增益 1/s (把车拉回圆上) */
 #define NAV_ARC_VMAX_R    0.5f     /* 径向修正速度限幅 m/s */

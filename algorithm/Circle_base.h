@@ -27,7 +27,8 @@ extern "C" {
 void Circle_Follow(void);
 
 extern bool flag_finish;
-extern float g_circle_speed;  /* 找圆速度系数 */
+extern float g_circle_k;      /* 圆心像素偏差 → 线速度(m/s) 的线性系数。
+                               * **不要从外部赋值** —— Circle_Follow() 每拍都会重算它 */
 extern float g_circle_vx;
 extern float g_circle_vy;
 extern char  g_circle_dir;

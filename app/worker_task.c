@@ -180,8 +180,8 @@ static const Jang_type NF_RANK[NF_RANK_COUNT] = {
  * 名次是收完才填进 g_tt.trophy[] 的, 固定表与实际情况对不上, 照它转盘会拿错奖杯。
  * 摆放阶段已改成反查 g_tt.trophy[] (见 ColorIdentif.c 的 SlotByTrophy)。 */
 
-/** 各奖杯放置时的丝杆高度 (mm)。。 */
-static const int16_t NF_PLACE_HEIGHT[4] = { 0u, -6u, -5u, -5u };
+
+static const int16_t NF_PLACE_HEIGHT[4] = { 0, -6, -6, -5 };
 
 /** 五个槽位里实际放的物块颜色。
  *  ★ NX 接入点: 换成 NX 回传的「收集到的颜色物块」。
@@ -541,7 +541,7 @@ static void NF_Stage_FindCircle(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-    BlockBasic_TurntableTo(CONE_SLOT);
+    BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
         Circle_Follow();
@@ -553,7 +553,6 @@ static void NF_Stage_FindCircle(void)
             NLF_Request(Event_Navigation);
             return;
         }
-        osDelay(5);
     }
 
     if (TT_RotateByQR()) {
@@ -582,7 +581,9 @@ static void NF_Stage_PlaceDown(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-    g_circle_speed = 1.0f;
+    /* 原来这里有一句 `g_circle_speed = 1.0f;` —— 是**死代码**:
+     * Circle_Follow() 每拍都会按圆心偏差重算这个系数, 外部赋值立刻被覆盖。
+     * 而且它一旦生效就是灾难(系数 1.0 × 20px 偏差 = 20 m/s)。已删。 */
 
     if (!s_place_latch) {
         if (slot_idx == SLOT_NONE) {
@@ -596,7 +597,7 @@ static void NF_Stage_PlaceDown(void)
 
         if (rank == third_place) {
             BlockBasic_LiftToAbs(8.0f);    /* 季军预下降: 降到 5mm (等价原 DOWN,33: 38-33) */
-            osDelay(170);
+            // osDelay(170);
         }
         BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
@@ -611,7 +612,7 @@ static void NF_Stage_PlaceDown(void)
             NLF_Request(Event_Navigation);
             return;
         }
-        osDelay(10);
+        // osDelay(10);
     }
 
     /* 3) 放置 + 收尾 */
@@ -620,7 +621,7 @@ static void NF_Stage_PlaceDown(void)
 
     if (rank == second_place) {
         BlockBasic_LiftToAbs(48.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
-        osDelay(250);
+        // osDelay(250);
     }
 
     s_place_idx++;
