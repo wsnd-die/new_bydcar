@@ -36,12 +36,16 @@ extern TIM_HandleTypeDef htim3;
 
 extern TIM_HandleTypeDef htim16;
 
+/* TIM7: 航向串级控制的步进时基 (1kHz), 见 algorithm/angle_ctrl.h */
+extern TIM_HandleTypeDef htim7;
+
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
 
 void MX_TIM3_Init(void);
 void MX_TIM16_Init(void);
+void MX_TIM7_Init(void);
 
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 

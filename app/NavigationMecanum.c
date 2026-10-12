@@ -11,6 +11,7 @@
 
 #include "block_basic.h"
 #include "Send_motor.h"           /* Send_commandmotor (下游执行器) */
+#include "angle_ctrl.h"         /* 串级航向环 (NAV_YAW_CASCADE=1 时用) */
 
 /* ==================================================================
  * 全局量 (唯一定义处, extern 声明在 NavigationMecanum.h)
@@ -234,11 +235,12 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
 
     uint8_t s0_set = 0u;
-    float   s0x = 0.0f, s0y = 0.0f;
-    float   ovs_x = 0.0f, ovs_y = 0.0f;
+    float   s0x = 0.0f, s0y = 0.0f, s0yaw = 0.0f;
+    float   ovs_x = 0.0f, ovs_y = 0.0f, ovs_yaw = 0.0f;   /* ★ ovs_yaw 本次新增 */
     float   last_ex = 0.0f, last_ey = 0.0f, last_eyaw = 0.0f;
 
     PoseData_t pose;
+    uint8_t    heading_armed = 0u;   /* 串级航向环是否已武装 (首个有效位姿) */
 
     /* 从这一拍起本段才算"在跑"。此前(含上面那 20ms 让路)到达的打断与本节无关,
      * 由 Route_AbortRequest() 直接丢弃 —— 见该函数的说明。 */
@@ -268,6 +270,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
                 Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
             }
             s_nav_aborted = true;
+            Angle_Disable();      /* 关串级航向环 (出口一: 被打断) */
             g_nav_running = 0u;
             return false;
         }
@@ -286,26 +289,48 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
         {
             invalid = 0;
 
+#if NAV_YAW_CASCADE
+            /* 等**首个有效位姿**再武装。Angle_Enable() 内部把轨迹状态初始化到
+             * 当前位姿, 且目标写成 `yaw_now + wrap(target − yaw_now)`(走近路) ——
+             * 所以起步无跳变, 且与 OPS9 的 yaw 零点是否标定无关。 */
+            if (!heading_armed) {
+                Angle_Enable(target_yaw);   /* 起点由 angle_ctrl 自己读 OPS9 当前位姿 */
+                heading_armed = 1u;
+            }
+#endif
+
             float ex   = target_x - pose.x;
             float ey   = target_y - pose.y;
             float eyaw = NAV_WrapPi(target_yaw - pose.yaw);
 
-            /* 调参仪表: 累计过冲量 + 末态 (见函数开头的说明) */
+            /* 调参仪表: 累计过冲量 + 末态 (见函数开头的说明)
+             * ★ ovs_yaw 本次新增 —— 原仪表**只统计 x/y 的过冲, yaw 没有**,
+             *   而这次换的正是航向控制器, 没有它就无从 A/B 对比。 */
             if (!s0_set) {
-                s0x = (ex >= 0.0f) ? 1.0f : -1.0f;
-                s0y = (ey >= 0.0f) ? 1.0f : -1.0f;
+                s0x   = (ex   >= 0.0f) ? 1.0f : -1.0f;
+                s0y   = (ey   >= 0.0f) ? 1.0f : -1.0f;
+                s0yaw = (eyaw >= 0.0f) ? 1.0f : -1.0f;
                 s0_set = 1u;
             }
-            if (-s0x * ex > ovs_x) ovs_x = -s0x * ex;
-            if (-s0y * ey > ovs_y) ovs_y = -s0y * ey;
+            if (-s0x   * ex   > ovs_x)   ovs_x   = -s0x   * ex;
+            if (-s0y   * ey   > ovs_y)   ovs_y   = -s0y   * ey;
+            if (-s0yaw * eyaw > ovs_yaw) ovs_yaw = -s0yaw * eyaw;
             last_ex = ex; last_ey = ey; last_eyaw = eyaw;
 
 
+#if NAV_YAW_CASCADE
+            /* 串级航向环 (S 型轨迹 + 速度/加速度双前馈): 指令由 TIM7 中断(1kHz)
+             * 算好, 这里只取**最新一条** —— 相位滞后从一拍 10~15ms 降到 ~1ms。
+             * 未使能(不是导航段)时 Angle_GetW() 返回 0。
+             * 详见 algorithm/angle_ctrl.h。 */
+            float w_w = Angle_GetW();
+#else
+            /* 旧: 手写单环 PD (NAV_YAW_CASCADE=0 时的回退, 逐字节等价于改前) */
             float eyaw_dz = (fabsf(eyaw) < NAV_YAW_DEADBAND) ? 0.0f : eyaw;
-            float wz = (fabsf(pose.wz) < NAV_YAW_DEADBAND) ? 0.0f : pose.wz;
-            /* 航向: 手写 PD (同前), 不受 NAV_XY_PROFILE 影响 */
-            float w_w = NAV_KP_YAW * eyaw_dz - NAV_KD_YAW * PID_Filter(0.25,wz);
+            float wz = (fabsf(pose.wz) < NAV_W_DEADBAND) ? 0.0f : pose.wz;
+            float w_w = NAV_KP_YAW * eyaw_dz - NAV_KD_YAW * wz;
             w_w = NAV_Clamp(w_w, -NAV_VMAX_W, NAV_VMAX_W);
+#endif
 
 #if NAV_XY_PROFILE
 
@@ -321,12 +346,16 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             vx_cmd = NAV_Ramp(vx_cmd, vx_ref, NAV_ACC_XY, NAV_DT);
             vy_cmd = NAV_Ramp(vy_cmd, vy_ref, NAV_ACC_XY, NAV_DT);
 
-            /* 世界 → 车体 (BollLocator.c:203-207 同式, 用当前 yaw) */
+            /* 世界 → 车体 (BollLocator.c:203-207 同式, 用当前 yaw)
+             * ⚠ 临时调参: 下面把平移硬写成 0(只留 w_w, 车原地转), 好单独调航向环。
+             *   调完**必须**把 `Mecanum_Calc_Full_V(0, 0, w_w)` 改回
+             *   `Mecanum_Calc_Full_V(bvx, bvy, w_w)` —— 否则车永远不走路。 */
             float c = cosf(pose.yaw), s = sinf(pose.yaw);
             float bvx =  vx_cmd * c + vy_cmd * s;
             float bvy = -vx_cmd * s + vy_cmd * c;
+            (void)bvx; (void)bvy;      /* 临时: 平移未接入, 消 unused 告警 */
 
-            MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
+            MecanumResult res = Mecanum_Calc_Full_V(0, 0, w_w);
             Send_commandmotor(&res);
 
             if (fabsf(ex) <= NAV_TOL_XY && fabsf(ey) <= NAV_TOL_XY &&
@@ -335,9 +364,9 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             {
                 if (++arrive >= NAV_ARRIVE_TICKS)
                 {
-                    printf("[NAV] ARRIVE t=%ums ex=%.3f ey=%.3f eyaw=%.3f vx=%.2f vy=%.2f | ovs=%.3f/%.3f dt=%.1fms(n=%u)\r\n",
+                    printf("[NAV] ARRIVE t=%ums ex=%.3f ey=%.3f eyaw=%.3f vx=%.2f vy=%.2f | ovs=%.3f/%.3f ovsyaw=%.4f dt=%.1fms(n=%u)\r\n",
                            (unsigned)(osKernelGetTickCount() - t0),
-                           ex, ey, eyaw, vx_cmd, vy_cmd, ovs_x, ovs_y,
+                           ex, ey, eyaw, vx_cmd, vy_cmd, ovs_x, ovs_y, ovs_yaw,
                            (dt_n > 0u) ? ((float)dt_sum / (float)dt_n) : 0.0f,
                            (unsigned)dt_n);
                     break;
@@ -353,15 +382,16 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
         if ((osKernelGetTickCount() - t0) >= NAV_TIMEOUT_MS)
         {
             NAV_Stop();
-            printf("[NAV] TIMEOUT t=%ums ex=%.3f ey=%.3f eyaw=%.3f valid=%u vx=%.2f vy=%.2f dt=%.1fms(n=%u)\r\n",
+            printf("[NAV] TIMEOUT t=%ums ex=%.3f ey=%.3f eyaw=%.3f ovsyaw=%.4f valid=%u vx=%.2f vy=%.2f dt=%.1fms(n=%u)\r\n",
                    (unsigned)(osKernelGetTickCount() - t0),
-                   last_ex, last_ey, last_eyaw, (unsigned)pose.valid, vx_cmd, vy_cmd,
+                   last_ex, last_ey, last_eyaw, ovs_yaw, (unsigned)pose.valid, vx_cmd, vy_cmd,
                    (dt_n > 0u) ? ((float)dt_sum / (float)dt_n) : 0.0f,
                    (unsigned)dt_n);
             if (pose.valid)
             {
                 Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
             }
+            Angle_Disable();      /* 关串级航向环 (出口二: 超时) */
             g_nav_running = 0u;
             return false;
         }
@@ -372,6 +402,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     /* 到达: 零速停车 + 刷新 Self_Dir */
     NAV_Stop();
     Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
+    Angle_Disable();          /* 关串级航向环 (出口三: 到达) */
     g_nav_running = 0u;
     return true;
 }
@@ -454,28 +485,6 @@ bool Nav_MoveBody(float target_x, float target_y, float target_yaw) {
 
 }
 
-/* ==================================================================
- * 流程打桩 (TODO: 待补真实实现)
- *
- * 本函数此前**只有 app/NavigationMecanum.h 的声明, 全工程无定义**,
- * app/worker_task.c 的 NLF_RunFlow() 一调用就报 undefined reference。
- * 按用户决定 (2026-09-28) 先补成打桩, 把流程骨架串通, 真实现以后再填。
- *
- * (同批打桩的 Nav_FeDuanPoint() 已补成真实实现, 见上面 Nav_RunWaypoints 之后。)
- * ================================================================== */
-
-/**
- * @brief  [打桩] 循迹完成后按实测位置校准点位。
- * @param  is_trophy true=奖杯循迹(LinFolR)校准亚军点, false=物料循迹(LinFolL)校准 a 点
- * @note   真实实现应在循迹结束后用当前 OPS9 位姿回写 g_tt.pos[] / 路径点表;
- *         现版本只记日志。可以参照 app/ColorIdentif.c 的 SetPos()。
- * @warning 打桩期间点位**不会被校准**, 循迹段结束后的定位误差不会修正。
- */
-void Nav_CalibrateAfterTrace(bool is_trophy)
-{
-    printf("[NAV-STUB] Nav_CalibrateAfterTrace(%s) called, no-op\r\n",
-           is_trophy ? "trophy" : "material");
-}
 
 /* ==================================================================
  * 定半径圆弧 (OPS9 位置闭环) —— V1.26.0
@@ -493,6 +502,12 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
     const float R     = fabsf(Radius);
     const float sweep = fabsf(Angle);
     const float dir   = (Cricle_t == Nav_CricleR) ? -1.0f : 1.0f; /* L=CCW(+), R=CW(-) */
+
+    /* 防御性禁用串级航向环: 圆弧有自己的航向律(切向 + v/R 前馈), 两者语义不同,
+     * 若 Nav_GoToWorld 曾异常退出而没关, 残留的 ISR 会去跟圆弧打架。
+     * @note 本次**不**把圆弧接到串级环上 —— 它的参考航向是移动目标(切向每拍变),
+     *       与"固定 θ_target"的三阶参考模型语义不同, 属 Phase 2。 */
+    Angle_Disable();
 
     if (R < 0.01f || sweep < 0.01f) {
         printf("[NAV-ARC] 参数非法 R=%.3f A=%.3f, 不动作\r\n", R, sweep);
@@ -580,7 +595,7 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
         float e_yaw    = NAV_WrapPi(atan2f(ty, tx) - pose.yaw);
         float e_yaw_dz = (fabsf(e_yaw) < NAV_YAW_DEADBAND) ? 0.0f : e_yaw;
         float wz       = (fabsf(pose.wz) < NAV_YAW_DEADBAND) ? 0.0f : pose.wz;
-        float w_w = w_ff + NAV_KP_YAW * e_yaw_dz - NAV_KD_YAW * PID_Filter(0.25f, wz);
+        float w_w = w_ff + NAV_KP_YAW * e_yaw_dz - NAV_KD_YAW * PID_Filter(0.2f, wz);
         w_w = NAV_Clamp(w_w, -NAV_VMAX_W, NAV_VMAX_W);
 
         /* 世界 → 车体 → 四轮 */

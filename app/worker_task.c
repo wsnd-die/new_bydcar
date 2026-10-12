@@ -26,7 +26,11 @@
 #include "ws2812.h"
 
 volatile uint8_t g_angle_ctrl_enable = 0;    /* 1 = 打开角度环 */
-volatile float   g_angle_target_yaw  = 0.0f; /* 目标航向 (deg), 与 g_hwt_imu_yaw 同量纲 */
+/* 目标航向。★ V1.32.0 起单位改为**弧度**(与 locator_ops9 的 pose.yaw 同量纲) ——
+ * 从前是"HWT906 的度", 那次改造把航向环的数据源从 HWT906 换成了 OPS9。
+ * 注意: 全工程**没有**任何地方在写这个量(唯一的写方曾是 Angle_Fuction 里的
+ * imu 链), 保留它是因为 arc_path/NavigationMecanum 仍把它当"契约量"置 0。 */
+volatile float   g_angle_target_yaw  = 0.0f;
 
 /* V1.23.0: 路线段打断。语义与用法见 worker_task.h 的说明。 */
 volatile uint8_t g_route_abort = 0u;
@@ -67,7 +71,8 @@ osThreadId_t fcTaskHandle  = NULL;
 osThreadId_t nlfTaskHandle = NULL;
 
 
-static AngleCtrl s_fc;
+/* 注: 原 `static AngleCtrl s_fc;` 已删 —— V1.32.0 把 angle_ctrl 改成
+ * **模块内自持状态**(ISR 上下文), 不再由调用方持有实例。 */
 
 static volatile SystemMode_t s_nlf_pending = Event_STOP;
 
@@ -79,42 +84,38 @@ static void AG_Stop(void)
     MecanumResult zero = Mecanum_Calc(0.0f, 0.0f);
     Send_commandmotor(&zero);
 }
+/**
+ * @brief 航向串级环的**任务式**调用样板
+ *
+ * @warning **本任务在当前工程里未被调用** —— `app_freertos.c` 的 `AC_Fuction()`
+ *          里那行 `Angle_Fuction();` 是注释掉的。保留它只为留住"任务式调用"
+ *          这条路径的样板。
+ *
+ * @note V1.32.0 改造后本函数已大幅瘦身, 三点说明:
+ *   · 航向环的**实际步进在 TIM7 中断里**(`Angle_Step`), **不在这里**;
+ *   · 本函数只把 `g_angle_ctrl_enable` / `g_angle_target_yaw` 这对**历史契约量**
+ *     映射到新的 `Angle_Enable/Disable`。`Angle_Enable()` 每次调用都会**重置
+ *     轨迹**, 所以只能走**边沿**, 不能每拍调。
+ *   · 数据源已由 HWT906 换成 **OPS9**(在 `angle_ctrl` 内部自读), 这里**不再碰 IMU**
+ *     —— 原来 `imu_hwt906.init()/update()/get_pose()` 那三处全删了。
+ */
 void Angle_Fuction(void)
 {
-    uint8_t  was_on    = 0;
+    uint8_t was_on = 0;
 
-    imu_hwt906.init();
-    Angle_Init(&s_fc);
+    Angle_Init();
 
     for (;;)
     {
-        PoseData_t pose;
-
-        imu_hwt906.update();
-        imu_hwt906.get_pose(&pose);
-
-        float yaw   = -RAD2DEG(pose.yaw);
-        float w_deg = -RAD2DEG(pose.wz);
-        // printf("%f,%f\r\n",yaw,w_deg);
-        if (g_angle_ctrl_enable)
-        {
-            if (!was_on) {
-                Angle_SetTarget(&s_fc, g_angle_target_yaw);
-                was_on = 1;
-            } else {
-                Angle_UpdateTarget(&s_fc, g_angle_target_yaw);
-            }
-
-            Angle_Update(&s_fc, yaw, w_deg);
-            MecanumResult cmd = Mecanum_Calc(0,
-                                             s_fc.cmd_w );
-
-            Send_commandmotor(&cmd);
+        if (g_angle_ctrl_enable && !was_on) {
+            /* ★ g_angle_target_yaw 是**弧度**(V1.32.0 起, 与 pose.yaw 同量纲,
+             *   不再是从前那个 HWT906 的度)。 */
+            Angle_Enable(g_angle_target_yaw);
+            was_on = 1;
         }
-        else if (was_on)
-        {
+        else if (!g_angle_ctrl_enable && was_on) {
+            Angle_Disable();
             AG_Stop();
-            s_fc.state = ANGLE_IDLE;
             was_on = 0;
         }
         osDelay(AG_TASK_PERIOD_MS);
@@ -480,7 +481,7 @@ static void NF_Stage_Navigation(void)
         printf("[FLOW] all stages done -> GoHome\r\n");
         AG_Stop();
         NLF_Request(Event_GoHome);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 127.0f / 180 * 2000 + 500);
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 80.0f / 180 * 2000 + 500);
     }
 }
 

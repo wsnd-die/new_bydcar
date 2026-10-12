@@ -28,6 +28,7 @@
 
 #include "Common_used.h"    /* 工程聚合头: FreeRTOS / HAL / 各业务模块 */
 #include "worker_task.h"    /* FC_Task / NLF_Task / NLF_Request */
+#include "angle_ctrl.h"     /* 航向环遥测 (Angle_GetTelem) —— 调参用 */
 #include "emm_5v.h"
 #include "ops9_g491_uart3.h"
 #include "servo_scs.h"
@@ -312,6 +313,28 @@ void ops9imu_fuction(void *argument)
     //
     // }
    // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
+    {
+      static uint32_t last_ts = 0u, t_last = 0u;
+      static uint32_t nchg = 0u, nw = 0u;
+      static float    sum_w = 0.0f, sum_w2 = 0.0f;
+
+      if (o_pose.timestamp != last_ts) { last_ts = o_pose.timestamp; nchg++; }
+
+      if (o_pose.valid) {                       /* 噪声统计只统计有效帧 */
+        sum_w  += o_pose.wz;
+        sum_w2 += o_pose.wz * o_pose.wz;
+        nw++;
+      }
+    if ((HAL_GetTick() - t_last) >= 1000u) {
+      float mean = (nw > 0u) ? (sum_w  / (float)nw) : 0.0f;
+      float var  = (nw > 0u) ? (sum_w2 / (float)nw - mean * mean) : 0.0f;
+      printf("[OPS9] fs=%luHz  wz: mean=%+.4f sigma=%.4f (n=%lu)  yaw=%.4f\r\n",
+             (unsigned long)nchg, mean,
+             sqrtf(var > 0.0f ? var : 0.0f), (unsigned long)nw, o_pose.yaw);
+      nchg = 0u; nw = 0u; sum_w = 0.0f; sum_w2 = 0.0f;
+      t_last = HAL_GetTick();
+    }
+  }
     osDelay(3);
   }
   /* USER CODE END ops9imu_fuction */
@@ -336,7 +359,7 @@ void gripper_task(void *argument)
   BlockBasic_LiftSync(0.0f);      /* 压限位归零 → 软件高度同步成 0 (之后用绝对高度指令) */
   printf("[scs] init SUCSESS: huart5 initialized\r\n");
   BlockBasic_TurntableTo(1);
-  Servo_SetAngle(127);
+  Servo_SetAngle(80);
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
     // BlockBasic_TurntableTo(SERVO_ID_SCS0009_MAX-id);
@@ -369,14 +392,30 @@ void FC_TASK(void *argument)
   NX_Init();
   NX_RequestMode(NX_MODE_YOLO);
   NX_ApplyMode();
-  ws2812_set_all(0xFFFFFF);
-  ws2812_update();
+  // ws2812_set_all(0xFFFFFF);
+  // ws2812_update();
   /* Infinite loop */
   for(;;)
   {
     // FC_Fuction();
 
-
+    /* ← 调参遥测(不需要时删掉): 20Hz 打印整条航向环。
+     *   tick 不涨     → Angle_Step() 没在跑(TIM7 没启动) ⇒ 先查这个
+     *   th≠yaw 且 e 不收敛 → 外环/内环增益不够
+     *   wm 跟不上 wref → 内环增益不够
+     *   wcmd 在 wref 上大幅摆动/高频抖 → 增益过大 / 低通不够
+     *   th 收敛但 yaw 有恒差 → 前馈或零偏问题 */
+    {
+        static uint16_t s_cnt = 0u;
+        if (++s_cnt >= 5u) {                 /* 10ms × 5 = 50ms = 20Hz */
+            AngleTelem_t t;
+            s_cnt = 0u;
+            Angle_GetTelem(&t);
+            printf("[YAW] tick=%lu th=%+.3f wref=%+.3f wm=%+.3f wcmd=%+.3f yaw=%+.3f e=%+.3f a=%+.3f\r\n",
+                   (unsigned long)t.tick, t.th_ref, t.w_ref, t.w_meas,
+                   t.cmd_w, t.yaw_meas, t.e_th, t.a_ref);
+        }
+    }
 
     MSP_Color_DebugPoll();      /* 打印 [MSP-RX] color='r' rgb_raw="2003040" */
     osDelay(10);
@@ -399,8 +438,8 @@ void NLF_TASK(void *argument)
 
   for(;;)
   {
-  NLF_Fuction();
-    // Nav_GoToWorld(0,0,0);
+  // NLF_Fuction();
+    Nav_GoToWorld(0,0,0);
     osDelay(10);
   }
   /* USER CODE END NLF_TASK */
@@ -449,8 +488,8 @@ uint8_t key_StartOK=0;
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
       // NLF_Request(Event_Collect_L);
-      NLF_Request(Event_START);
-      Servo_SetAngle(39);
+      // NLF_Request(Event_START);
+      Servo_SetAngle(165);
       key_StartOK=1;
     }
 

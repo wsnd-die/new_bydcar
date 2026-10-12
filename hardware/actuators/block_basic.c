@@ -371,7 +371,7 @@ void Servo_Angle(float angle_deg)
     turntable_write_angle(angle_servo);
 }
 
-static float Now_Angle=127;
+static float Now_Angle=80;
 #define ANGLE_STEP     30.0f
 #define CostTime      1.0f
 
@@ -391,7 +391,7 @@ static void  Servo_AngleAcc(float angle_deg) {
 void Servo_SetAngle(float Angle)
 {
 
-    if(Angle>=130){Angle=130;}
+    if(Angle>=180){Angle=180;}
     if(Angle<=37){Angle=37;}
 
     // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, Angle / 180 * 2000 + 500);

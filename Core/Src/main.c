@@ -33,6 +33,7 @@
 #include <stdio.h>
 
 #include "emm_5v.h"
+#include "angle_ctrl.h"     /* 航向串级控制 + S曲线 (TIM7 中断步进) */
 
 /* USER CODE END Includes */
 
@@ -109,12 +110,16 @@ int main(void)
   MX_USART3_UART_Init();
   MX_I2C3_Init();
   MX_TIM16_Init();
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
+
+
+  Angle_Init();
+  HAL_TIM_Base_Start_IT(&htim7);
 
   fdcan2_UserInit();
 
-  /* MSP 颜色芯片的接收在 app_freertos.c 的 MX_FREERTOS_Init() 里挂 (V1.20.6) ——
-   * 全工程只此一处, 这里不再重复调用。 */
+
 
   /* USER CODE END 2 */
 
@@ -220,7 +225,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
-
+  if (htim->Instance == TIM7)
+  {
+    /* 航向串级: S 曲线步进 + 双前馈 PID。纯浮点, 无 FreeRTOS/printf/库调用。
+     * 算出的 cmd_w 由任务侧 Angle_GetW() 取走下发。 */
+    Angle_Step();
+  }
   /* USER CODE END Callback 1 */
 }
 

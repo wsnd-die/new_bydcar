@@ -28,6 +28,9 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim16;
 DMA_HandleTypeDef hdma_tim16_ch1;
 
+/* TIM7: 航向串级控制的步进时基 (1kHz) */
+TIM_HandleTypeDef htim7;
+
 /* TIM3 init function */
 void MX_TIM3_Init(void)
 {
@@ -141,6 +144,31 @@ void MX_TIM16_Init(void)
 
 }
 
+/* TIM7 init function —— 航向串级控制的步进时基。
+ * 时钟: APB1 分频=DIV1 ⇒ 170MHz (APB 预分频为 1 时无 ×2 规则)
+ * 170MHz / (169+1) = 1MHz, / (999+1) = **1kHz**
+ * ⚠ 改 PSC/ARR 必须同步改 angle_ctrl.h 的 ANG_DT。 */
+void MX_TIM7_Init(void)
+{
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 169;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 999;
+  htim7.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim7, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
 void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
 {
 
@@ -154,6 +182,17 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
   /* USER CODE BEGIN TIM3_MspInit 1 */
 
   /* USER CODE END TIM3_MspInit 1 */
+  }
+  else if(tim_baseHandle->Instance==TIM7)
+  {
+    /* TIM7 clock enable */
+    __HAL_RCC_TIM7_CLK_ENABLE();
+
+    /* TIM7 interrupt Init —— 优先级 5: 与全工程其它中断一致
+     * (FreeRTOSConfig 的 configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY = 5,
+     *  数值 >=5 的中断才不破坏内核临界区)。 */
+    HAL_NVIC_SetPriority(TIM7_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(TIM7_IRQn);
   }
   else if(tim_baseHandle->Instance==TIM16)
   {
@@ -251,6 +290,14 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
   /* USER CODE BEGIN TIM3_MspDeInit 1 */
 
   /* USER CODE END TIM3_MspDeInit 1 */
+  }
+  else if(tim_baseHandle->Instance==TIM7)
+  {
+    /* Peripheral clock disable */
+    __HAL_RCC_TIM7_CLK_DISABLE();
+
+    /* TIM7 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(TIM7_IRQn);
   }
   else if(tim_baseHandle->Instance==TIM16)
   {

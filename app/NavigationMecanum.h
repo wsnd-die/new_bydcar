@@ -53,8 +53,8 @@ extern volatile uint8_t g_nav_running;
 #define NAV_TIMEOUT_MS         10000u  /* 单点超时 ms */
 #define NAV_KP_XY              3.2f    /* 平移 P: 0.4m 误差 → 0.4 m/s */
 #define NAV_KD_XY              0.5f    /* 平移 D: 首版关 (OPS9 噪声放大风险) */
-#define NAV_KP_YAW             5.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
-#define NAV_KD_YAW             0.27f    /* 航向 D: 首版关 */
+#define NAV_KP_YAW             7.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
+#define NAV_KD_YAW             0.57f    /* 航向 D: 首版关 */
 #define NAV_VMAX_X            2.5f    /* x平移速度限幅 m/s */
 #define NAV_VMAX_Y            2.5f    /* y平移速度限幅 m/s */
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
@@ -62,7 +62,8 @@ extern volatile uint8_t g_nav_running;
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
 #define NAV_TOL_XY             0.02f   /* 到达容差 3cm */
 #define NAV_TOL_YAW            0.05f   /* 到达容差 ~2.9° */
-#define NAV_YAW_DEADBAND       0.0175f /* rad ≈ 1.0° (取容差的 1/3) */
+#define NAV_YAW_DEADBAND       0.0275f /* rad ≈ 1.0° (取容差的 1/3) */
+#define NAV_W_DEADBAND         0.047f
 #define NAV_ARRIVE_TICKS       5u      /* 连续 5 拍判到达 (抗单帧抖动) */
 #define NAV_MAX_INVALID_TICKS  20u     /* OPS9 离线容忍 0.3s, 超限零速保持 */
 
@@ -84,19 +85,30 @@ extern volatile uint8_t g_nav_running;
 #ifndef NAV_XY_PROFILE
 #define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
 #endif
+
+/** 航向控制器选择（本次新增, 范式同上）。
+ *  1 = **串级航向环**: S 型轨迹 + 速度前馈 + 加速度前馈, 步进在 TIM7 中断里跑(1kHz),
+ *      本函数只取最新指令 `Angle_GetW()`。见 `algorithm/angle_ctrl.h`。
+ *  0 = 退回原来的**手写单环 PD**（`NAV_KP_YAW`/`NAV_KD_YAW`/`NAV_W_DEADBAND`,
+ *      逐字节等价于改动前）—— 一键 A/B 对比与回退。
+ *  @note 置 0 时 angle_ctrl 的 ISR 仍会跑, 但没人使能它 → 输出恒 0, 无副作用。 */
+#ifndef NAV_YAW_CASCADE
+#define NAV_YAW_CASCADE  1
+#endif
 #define NAV_KP_X_LIN    7.3f
 #define NAV_KP_Y_LIN    7.3f
 #define NAV_KD_X_LIN    0.4f
 #define NAV_KD_Y_LIN    0.4f
-#define NAV_BRK_X       0.8f
-#define NAV_BRK_Y       0.8f
-#define NAV_ARRIVE_VMAX  0.19f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
+#define NAV_BRK_X       0.7f
+#define NAV_BRK_Y       0.7f
+#define NAV_ARRIVE_VMAX  0.49f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 
 /* ============================================================
  * 近场/远场控制律切换 —— V1.28.1
  *
- *   远场 (|e| ≥ HI): 制动曲线上限 |v| ≤ √(2·a_brk·|e|)  —— 此刻还刹得住
+ *   远场 (|e| ≥ HI): 制动曲线上限 |v| ≤ √(2·a_brk·|e|)
+ *   —— 此刻还刹得住
  *   近场 (|e| ≤ LO): 低速爬行上限 |v| ≤ NAV_CREEP_X_V/_Y_V —— 末端慢走不冲过头
  *   中间: 用 smoothstep 权重把两个上限**平滑混合**(不是 if 分段, 无阶跃)
  *
@@ -205,13 +217,6 @@ bool Nav_MoveBody(float target_x, float target_y, float target_yaw);
  *          会走导航的调用（`Place()`、`Nav_MoveBody()` 等都会重置这个标记）。
  */
 bool Nav_LastAborted(void);
-
-/**
- * @brief 循迹完成后按实测位置校准 a 点 / 亚军点
- *
- * @param is_trophy true=奖杯循迹(LinFolR)校准亚军点, false=物料循迹(LinFolL)校准a点
- */
-void Nav_CalibrateAfterTrace(bool is_trophy);
 
 /** 圆弧转向: L = 左弧 (CCW, 圆心在车左侧), R = 右弧 (CW, 圆心在车右侧)。 */
 typedef enum {

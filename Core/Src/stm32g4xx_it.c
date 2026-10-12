@@ -69,6 +69,7 @@ extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
 extern TIM_HandleTypeDef htim6;
+extern TIM_HandleTypeDef htim7;
 
 /* USER CODE BEGIN EV */
 extern I2C_HandleTypeDef hi2c3;   /* I2C3_EV/ER_IRQHandler 用，V1.14.2 */
@@ -338,6 +339,17 @@ void TIM6_DAC_IRQHandler(void)
   /* USER CODE BEGIN TIM6_DAC_IRQn 1 */
 
   /* USER CODE END TIM6_DAC_IRQn 1 */
+}
+
+/**
+  * @brief This function handles TIM7 global interrupt.
+  * @note  航向串级控制的 1kHz 步进时基 (见 algorithm/angle_ctrl.h)。
+  *        实体计算挂在 HAL_TIM_PeriodElapsedCallback 的 TIM7 分支里 —— 走回调
+  *        比在这里直调少一层耦合, 且与 TIM6(HAL 时基) 同款范式。
+  */
+void TIM7_IRQHandler(void)
+{
+  HAL_TIM_IRQHandler(&htim7);
 }
 
 /**

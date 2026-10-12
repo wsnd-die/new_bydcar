@@ -7,6 +7,7 @@
 #include "mecanum.h"
 #include "Send_motor.h"
 #include "worker_task.h"    /* g_angle_ctrl_enable：借走电机独占权 */
+#include "angle_ctrl.h"   /* Angle_Disable(): 防御性关掉串级航向环 */
 
 #define ARC_RAD2DEG(r)  ((r) * 57.2957795131f)
 
@@ -30,6 +31,7 @@ void Arc_SetParam(float radius_m, float v_mps, float sweep_deg)
 void Arc_Abort(void)
 {
     g_angle_ctrl_enable = 0;    /* 让 FC 角度环停手，避免两个指令源打架 */
+    Angle_Disable();          /* 同理关掉串级航向环 */
     ARC_Stop();
 }
 
@@ -38,6 +40,10 @@ bool Arc_Run(void)
     const float radius = s_radius_m;
     const float v      = s_v_mps;
     const float sweep  = fabsf(s_sweep_deg);
+
+    /* 防御性禁用串级航向环 —— 本模块是纯几何开环航向(v/R 前馈, 不读 IMU),
+     * 与串级环语义不同, 不能被它同时驱动同一组电机。 */
+    Angle_Disable();
 
     float    w_rad, w_deg, sweep_time_s;
     uint32_t t0, timeout_ms;
