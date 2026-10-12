@@ -60,7 +60,7 @@ extern volatile uint8_t g_nav_running;
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
 #define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
-#define NAV_TOL_XY             0.02f   /* 到达容差 3cm */
+#define NAV_TOL_XY             0.03f   /* 到达容差 3cm */
 #define NAV_TOL_YAW            0.05f   /* 到达容差 ~2.9° */
 #define NAV_YAW_DEADBAND       0.0275f /* rad ≈ 1.0° (取容差的 1/3) */
 #define NAV_W_DEADBAND         0.047f
