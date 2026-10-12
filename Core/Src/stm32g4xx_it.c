@@ -343,9 +343,15 @@ void TIM6_DAC_IRQHandler(void)
 
 /**
   * @brief This function handles TIM7 global interrupt.
-  * @note  航向串级控制的 1kHz 步进时基 (见 algorithm/angle_ctrl.h)。
-  *        实体计算挂在 HAL_TIM_PeriodElapsedCallback 的 TIM7 分支里 —— 走回调
-  *        比在这里直调少一层耦合, 且与 TIM6(HAL 时基) 同款范式。
+  * @note  V1.32.0 时这里是航向串级控制的 1kHz 步进时基。
+  *        **V1.33.0 已把步进搬进 `Nav_GoToWorld()` 的循环**, 且 `main()` 里的
+  *        `HAL_TIM_Base_Start_IT(&htim7)` 已停掉 —— 本中断不再触发。
+  * @warning **TIM7 是争用资源**: `hardware/bus/sw_uart.c` 的 `SW_UART_TIM`
+  *          也要它, 那边自己还定义了一份 `TIM7_IRQHandler`。当前没撞车只因为
+  *          `sw_uart.c` **没有 include 自己的头** (`sw_uart.h`), 于是
+  *          `#if SW_UART_ENABLE` 恒按 0 走、整个文件被预处理掉。
+  *          谁哪天给 `sw_uart.c` 补上 `#include "sw_uart.h"`, 这里立刻变成
+  *          重复定义 —— 那时要启用软件串口, 就得先把这份删掉。
   */
 void TIM7_IRQHandler(void)
 {

@@ -33,7 +33,7 @@
 #include <stdio.h>
 
 #include "emm_5v.h"
-#include "angle_ctrl.h"     /* 航向串级控制 + S曲线 (TIM7 中断步进) */
+#include "angle_ctrl.h"     /* 航向串级控制 + S曲线 (V1.33.0: 步进在 Nav_GoToWorld) */
 
 /* USER CODE END Includes */
 
@@ -115,7 +115,12 @@ int main(void)
 
 
   Angle_Init();
-  HAL_TIM_Base_Start_IT(&htim7);
+  /* V1.33.0: 航向环步进已从 TIM7 中断搬进 Nav_GoToWorld() 的循环
+   * (见 algorithm/angle_ctrl.h 的"步进位置"), 这里不再启动 TIM7 ——
+   * 否则 1kHz 的空中断白烧 CPU。
+   * 要回退到中断步进: 放开这行 + 恢复下面 HAL_TIM_PeriodElapsedCallback
+   * 里那句 Angle_Step()。 */
+  /* HAL_TIM_Base_Start_IT(&htim7); */
 
   fdcan2_UserInit();
 
@@ -227,9 +232,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE BEGIN Callback 1 */
   if (htim->Instance == TIM7)
   {
-    /* 航向串级: S 曲线步进 + 双前馈 PID。纯浮点, 无 FreeRTOS/printf/库调用。
-     * 算出的 cmd_w 由任务侧 Angle_GetW() 取走下发。 */
-    Angle_Step();
+    /* V1.33.0: 航向环步进已搬进 Nav_GoToWorld() 的循环(与下发同拍), TIM7
+     * 不再需要 —— main.c 里的 HAL_TIM_Base_Start_IT(&htim7) 也已停掉, 本
+     * 分支不会再进来。
+     * 要回退到中断步进: 放开下面这行 + 恢复 main() 里的 Start_IT。
+     *   Angle_Step(); */
   }
   /* USER CODE END Callback 1 */
 }

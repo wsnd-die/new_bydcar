@@ -36,7 +36,7 @@ extern TIM_HandleTypeDef htim3;
 
 extern TIM_HandleTypeDef htim16;
 
-/* TIM7: 航向串级控制的步进时基 (1kHz), 见 algorithm/angle_ctrl.h */
+/* TIM7: 已停用 —— 航向环步进搬进 Nav_GoToWorld() (V1.33.0)。留给 sw_uart 争用, 见 tim.c */
 extern TIM_HandleTypeDef htim7;
 
 /* USER CODE BEGIN Private defines */

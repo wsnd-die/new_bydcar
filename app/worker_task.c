@@ -92,7 +92,7 @@ static void AG_Stop(void)
  *          这条路径的样板。
  *
  * @note V1.32.0 改造后本函数已大幅瘦身, 三点说明:
- *   · 航向环的**实际步进在 TIM7 中断里**(`Angle_Step`), **不在这里**;
+ *   · 航向环的**实际步进在 `Nav_GoToWorld()` 的循环里**(`Angle_Step`), **不在这里**;
  *   · 本函数只把 `g_angle_ctrl_enable` / `g_angle_target_yaw` 这对**历史契约量**
  *     映射到新的 `Angle_Enable/Disable`。`Angle_Enable()` 每次调用都会**重置
  *     轨迹**, 所以只能走**边沿**, 不能每拍调。

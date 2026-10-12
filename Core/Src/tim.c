@@ -144,10 +144,12 @@ void MX_TIM16_Init(void)
 
 }
 
-/* TIM7 init function —— 航向串级控制的步进时基。
- * 时钟: APB1 分频=DIV1 ⇒ 170MHz (APB 预分频为 1 时无 ×2 规则)
- * 170MHz / (169+1) = 1MHz, / (999+1) = **1kHz**
- * ⚠ 改 PSC/ARR 必须同步改 angle_ctrl.h 的 ANG_DT。 */
+/* TIM7 init function —— ⚠ **当前无人使用**。
+ * V1.33.0 起航向环步进搬进了 `Nav_GoToWorld()` 的循环, main.c 也不再调
+ * `HAL_TIM_Base_Start_IT(&htim7)` ⇒ 这个定时器既不跑中断也不驱动任何东西。
+ * 保留初始化只为不丢 CubeMX 配置。(另: `hardware/bus/sw_uart.c` 也想拿 TIM7,
+ * 见 Core/Src/stm32g4xx_it.c 的 TIM7_IRQHandler 上方的 @warning。)
+ * 时钟: APB1 分频=DIV1 ⇒ 170MHz; /(169+1) = 1MHz, /(999+1) = 1kHz。 */
 void MX_TIM7_Init(void)
 {
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};

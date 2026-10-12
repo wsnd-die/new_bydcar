@@ -400,7 +400,8 @@ void FC_TASK(void *argument)
     // FC_Fuction();
 
     /* ← 调参遥测(不需要时删掉): 20Hz 打印整条航向环。
-     *   tick 不涨     → Angle_Step() 没在跑(TIM7 没启动) ⇒ 先查这个
+     *   tick 不涨     → Angle_Step() 没在跑(V1.33.0 起步进在 Nav_GoToWorld 的
+     *                    循环里, 即没进导航段) ⇒ 先查这个
      *   th≠yaw 且 e 不收敛 → 外环/内环增益不够
      *   wm 跟不上 wref → 内环增益不够
      *   wcmd 在 wref 上大幅摆动/高频抖 → 增益过大 / 低通不够
@@ -411,9 +412,9 @@ void FC_TASK(void *argument)
             AngleTelem_t t;
             s_cnt = 0u;
             Angle_GetTelem(&t);
-            printf("[YAW] tick=%lu th=%+.3f wref=%+.3f wm=%+.3f wcmd=%+.3f yaw=%+.3f e=%+.3f a=%+.3f\r\n",
-                   (unsigned long)t.tick, t.th_ref, t.w_ref, t.w_meas,
-                   t.cmd_w, t.yaw_meas, t.e_th, t.a_ref);
+            printf("[YAW] tick=%lu th=%+.3f wm=%+.3f wcmd=%+.3f yaw=%+.3f e=%+.3f\r\n",
+                   (unsigned long)t.tick, t.th_ref, t.w_meas,
+                   t.cmd_w, t.yaw_meas, t.e_th);
         }
     }
 
@@ -438,8 +439,8 @@ void NLF_TASK(void *argument)
 
   for(;;)
   {
-  // NLF_Fuction();
-    Nav_GoToWorld(0,0,0);
+  NLF_Fuction();
+    // Nav_GoToWorld(0,0,0);
     osDelay(10);
   }
   /* USER CODE END NLF_TASK */
@@ -488,7 +489,7 @@ uint8_t key_StartOK=0;
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");
       // NLF_Request(Event_Collect_L);
-      // NLF_Request(Event_START);
+      NLF_Request(Event_START);
       Servo_SetAngle(165);
       key_StartOK=1;
     }

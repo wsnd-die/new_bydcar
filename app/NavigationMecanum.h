@@ -53,8 +53,8 @@ extern volatile uint8_t g_nav_running;
 #define NAV_TIMEOUT_MS         10000u  /* 单点超时 ms */
 #define NAV_KP_XY              3.2f    /* 平移 P: 0.4m 误差 → 0.4 m/s */
 #define NAV_KD_XY              0.5f    /* 平移 D: 首版关 (OPS9 噪声放大风险) */
-#define NAV_KP_YAW             7.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
-#define NAV_KD_YAW             0.57f    /* 航向 D: 首版关 */
+#define NAV_KP_YAW             5.0f    /* 航向 P: 0.5rad 误差 → 1 rad/s */
+#define NAV_KD_YAW             0.27f    /* 航向 D: 首版关 */
 #define NAV_VMAX_X            2.5f    /* x平移速度限幅 m/s */
 #define NAV_VMAX_Y            2.5f    /* y平移速度限幅 m/s */
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
@@ -87,20 +87,22 @@ extern volatile uint8_t g_nav_running;
 #endif
 
 /** 航向控制器选择（本次新增, 范式同上）。
- *  1 = **串级航向环**: S 型轨迹 + 速度前馈 + 加速度前馈, 步进在 TIM7 中断里跑(1kHz),
- *      本函数只取最新指令 `Angle_GetW()`。见 `algorithm/angle_ctrl.h`。
+ *  1 = **串级航向环**: S 型轨迹 + 速度前馈 + 加速度前馈。**V1.33.0 起步进就
+ *      在 `Nav_GoToWorld()` 的循环里**（`Angle_Step()` → `Angle_GetW()`），
+ *      与下发同拍。见 `algorithm/angle_ctrl.h` 的"步进位置"。
  *  0 = 退回原来的**手写单环 PD**（`NAV_KP_YAW`/`NAV_KD_YAW`/`NAV_W_DEADBAND`,
  *      逐字节等价于改动前）—— 一键 A/B 对比与回退。
- *  @note 置 0 时 angle_ctrl 的 ISR 仍会跑, 但没人使能它 → 输出恒 0, 无副作用。 */
+ *  @note 置 0 时没人使能 angle_ctrl(`Angle_Step()` 的调用点本身也在这个
+ *        `#if` 里) → `Angle_GetW()` 恒返回 0, 无副作用。 */
 #ifndef NAV_YAW_CASCADE
 #define NAV_YAW_CASCADE  1
 #endif
-#define NAV_KP_X_LIN    7.3f
-#define NAV_KP_Y_LIN    7.3f
+#define NAV_KP_X_LIN    5.3f
+#define NAV_KP_Y_LIN    5.3f
 #define NAV_KD_X_LIN    0.4f
 #define NAV_KD_Y_LIN    0.4f
-#define NAV_BRK_X       0.7f
-#define NAV_BRK_Y       0.7f
+#define NAV_BRK_X       0.6f
+#define NAV_BRK_Y       0.6f
 #define NAV_ARRIVE_VMAX  0.49f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 
@@ -114,10 +116,10 @@ extern volatile uint8_t g_nav_running;
  *
  * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
-#define NAV_SWITCH_LO   0.3f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
-#define NAV_SWITCH_HI   0.55f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
-#define NAV_CREEP_X_V   0.4f   /* X 轴近场爬行速度上限 m/s */
-#define NAV_CREEP_Y_V   0.4f   /* Y 轴近场爬行速度上限 m/s */
+#define NAV_SWITCH_LO   0.25f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
+#define NAV_SWITCH_HI   0.5f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
+#define NAV_CREEP_X_V   0.47f   /* X 轴近场爬行速度上限 m/s */
+#define NAV_CREEP_Y_V   0.47f   /* Y 轴近场爬行速度上限 m/s */
 /* ★ 上面两个爬行上限**必须 < NAV_ARRIVE_VMAX**, 否则到位判据的 `|v| ≤ NAV_ARRIVE_VMAX`
  *   永远满足不了 —— 低速段 v 会收敛到爬行封顶值, 而封顶值比门限还大。 */
 
@@ -126,7 +128,7 @@ extern volatile uint8_t g_nav_running;
  * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
 #define NAV_ARC_V         0.55f    /* 圆弧线速度 m/s */
-#define NAV_ARC_ACC       0.8f     /* 线速度软启动加速度 m/s² */
+#define NAV_ARC_ACC       0.9f     /* 线速度软启动加速度 m/s² */
 #define NAV_ARC_KP_R      1.2f     /* 径向误差修正增益 1/s (把车拉回圆上) */
 #define NAV_ARC_VMAX_R    0.5f     /* 径向修正速度限幅 m/s */
 

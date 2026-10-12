@@ -20,10 +20,10 @@ float g_circle_k = 0.0f;
 
 #define CIRCLE_XY_FAST_TH   15.0f   /* 偏差阈值 (像素) */
 #define CIRCLE_XY_V_FAST    0.0029f   /* 系数: 偏差 > 10px 时 (m/s per px) */
-#define CIRCLE_XY_V_SLOW    0.00085f   /* 系数: 偏差 ≤ 10px 时 (m/s per px) */
+#define CIRCLE_XY_V_SLOW    0.00075f   /* 系数: 偏差 ≤ 10px 时 (m/s per px) */
 
 /* 找圆稳定: 连续 'O' 确认次数, 达到才认为已居中, 防止方向抖动误判/一直动 */
-#define CIRCLE_O_STABLE_CNT  3U
+#define CIRCLE_O_STABLE_CNT  4U
 static uint8_t s_o_cnt = 0U;
 static float s_sum_x = 0.0f;   /* 确认期间圆心偏差累加 */
 static float s_sum_y = 0.0f;

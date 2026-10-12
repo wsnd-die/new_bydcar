@@ -312,6 +312,8 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
                 s0yaw = (eyaw >= 0.0f) ? 1.0f : -1.0f;
                 s0_set = 1u;
             }
+            float ex_x =ex-last_ex;;
+            float ex_y = ey-last_ey;
             if (-s0x   * ex   > ovs_x)   ovs_x   = -s0x   * ex;
             if (-s0y   * ey   > ovs_y)   ovs_y   = -s0y   * ey;
             if (-s0yaw * eyaw > ovs_yaw) ovs_yaw = -s0yaw * eyaw;
@@ -319,10 +321,8 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
 
 #if NAV_YAW_CASCADE
-            /* 串级航向环 (S 型轨迹 + 速度/加速度双前馈): 指令由 TIM7 中断(1kHz)
-             * 算好, 这里只取**最新一条** —— 相位滞后从一拍 10~15ms 降到 ~1ms。
-             * 未使能(不是导航段)时 Angle_GetW() 返回 0。
-             * 详见 algorithm/angle_ctrl.h。 */
+
+            Angle_Step();
             float w_w = Angle_GetW();
 #else
             /* 旧: 手写单环 PD (NAV_YAW_CASCADE=0 时的回退, 逐字节等价于改前) */
@@ -335,9 +335,9 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 #if NAV_XY_PROFILE
 
             float vx_ref = NAV_AxisRef(ex, NAV_VMAX_X, NAV_BRK_X, NAV_KP_X_LIN,
-                                       NAV_KD_X_LIN, vx_cmd, 'x');
+                                       NAV_KD_X_LIN, ex_x, 'x');
             float vy_ref = NAV_AxisRef(ey, NAV_VMAX_Y, NAV_BRK_Y, NAV_KP_Y_LIN,
-                                       NAV_KD_Y_LIN, vy_cmd, 'y');
+                                       NAV_KD_Y_LIN, ex_y, 'y');
 #else
             float vx_ref = PID_calc(&pid_x, pose.x, target_x);
             float vy_ref = PID_calc(&pid_y, pose.y, target_y);
@@ -346,16 +346,13 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             vx_cmd = NAV_Ramp(vx_cmd, vx_ref, NAV_ACC_XY, NAV_DT);
             vy_cmd = NAV_Ramp(vy_cmd, vy_ref, NAV_ACC_XY, NAV_DT);
 
-            /* 世界 → 车体 (BollLocator.c:203-207 同式, 用当前 yaw)
-             * ⚠ 临时调参: 下面把平移硬写成 0(只留 w_w, 车原地转), 好单独调航向环。
-             *   调完**必须**把 `Mecanum_Calc_Full_V(0, 0, w_w)` 改回
-             *   `Mecanum_Calc_Full_V(bvx, bvy, w_w)` —— 否则车永远不走路。 */
+
             float c = cosf(pose.yaw), s = sinf(pose.yaw);
             float bvx =  vx_cmd * c + vy_cmd * s;
             float bvy = -vx_cmd * s + vy_cmd * c;
             (void)bvx; (void)bvy;      /* 临时: 平移未接入, 消 unused 告警 */
 
-            MecanumResult res = Mecanum_Calc_Full_V(0, 0, w_w);
+            MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
             Send_commandmotor(&res);
 
             if (fabsf(ex) <= NAV_TOL_XY && fabsf(ey) <= NAV_TOL_XY &&
@@ -502,11 +499,6 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
     const float R     = fabsf(Radius);
     const float sweep = fabsf(Angle);
     const float dir   = (Cricle_t == Nav_CricleR) ? -1.0f : 1.0f; /* L=CCW(+), R=CW(-) */
-
-    /* 防御性禁用串级航向环: 圆弧有自己的航向律(切向 + v/R 前馈), 两者语义不同,
-     * 若 Nav_GoToWorld 曾异常退出而没关, 残留的 ISR 会去跟圆弧打架。
-     * @note 本次**不**把圆弧接到串级环上 —— 它的参考航向是移动目标(切向每拍变),
-     *       与"固定 θ_target"的三阶参考模型语义不同, 属 Phase 2。 */
     Angle_Disable();
 
     if (R < 0.01f || sweep < 0.01f) {
