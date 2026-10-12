@@ -60,8 +60,8 @@ extern volatile uint8_t g_nav_running;
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
 #define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
-#define NAV_TOL_XY             0.02f   /* 到达容差 3cm */
-#define NAV_TOL_YAW            0.05f   /* 到达容差 ~2.9° */
+#define NAV_TOL_XY             0.04f   /* 到达容差 3cm */
+#define NAV_TOL_YAW            0.1f   /* 到达容差 ~2.9° */
 #define NAV_YAW_DEADBAND       0.0275f /* rad ≈ 1.0° (取容差的 1/3) */
 #define NAV_W_DEADBAND         0.047f
 #define NAV_ARRIVE_TICKS       5u      /* 连续 5 拍判到达 (抗单帧抖动) */
@@ -96,8 +96,8 @@ extern volatile uint8_t g_nav_running;
 #define NAV_YAW_CASCADE  1
 #endif
 #define NAV_KP_X_LIN    3.3f
-#define NAV_KP_Y_LIN    5.3f
-#define NAV_KD_X_LIN    0.5f
+#define NAV_KP_Y_LIN    4.7f
+#define NAV_KD_X_LIN    1.0f
 #define NAV_KD_Y_LIN    1.5f
 #define NAV_BRK_X       0.45f
 #define NAV_BRK_Y       0.55f
@@ -106,13 +106,13 @@ extern volatile uint8_t g_nav_running;
 
 #define NAV_SWITCH_LO   0.3f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
 #define NAV_SWITCH_HI   0.7f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
-#define NAV_CREEP_X_V   0.52f   /* X 轴近场爬行速度上限 m/s —— **默认值** */
-#define NAV_CREEP_Y_V   0.52f   /* Y 轴近场爬行速度上限 m/s —— **默认值** */
+#define NAV_CREEP_X_V   0.53f   /* X 轴近场爬行速度上限 m/s —— **默认值** */
+#define NAV_CREEP_Y_V   0.53f   /* Y 轴近场爬行速度上限 m/s —— **默认值** */
 
 
 #define NAV_SLOW_WP_IDX   7u     /* "12 摆放e 点" (g_waypoints[] 下标 7) */
 #define NAV_SLOW_WP_IDX2  6u
-#define NAV_SLOW_WP_LIM   0.4f   /* 走这个点时的近场爬行上限 m/s (X/Y 共用) */
+#define NAV_SLOW_WP_LIM   0.3f   /* 走这个点时的近场爬行上限 m/s (X/Y 共用) */
 
 #define NAV_HOME_SPEED   1.3f
 
@@ -121,7 +121,7 @@ extern volatile float g_nav_leg_speed;
 
 #define NAV_ARC_V         0.55f    /* 圆弧线速度 m/s */
 #define NAV_ARC_ACC       0.9f     /* 线速度软启动加速度 m/s² */
-#define NAV_ARC_KP_R      2.6f     /* 径向误差修正增益 1/s (把车拉回圆上) */
+#define NAV_ARC_KP_R      2.5f     /* 径向误差修正增益 1/s (把车拉回圆上) */
 #define NAV_ARC_VMAX_R    0.5f     /* 径向修正速度限幅 m/s */
 
 

@@ -399,24 +399,17 @@ void FC_TASK(void *argument)
   {
     // FC_Fuction();
 
-    /* ← 调参遥测(不需要时删掉): 20Hz 打印整条航向环。
-     *   tick 不涨     → Angle_Step() 没在跑(V1.33.0 起步进在 Nav_GoToWorld 的
-     *                    循环里, 即没进导航段) ⇒ 先查这个
-     *   th≠yaw 且 e 不收敛 → 外环/内环增益不够
-     *   wm 跟不上 wref → 内环增益不够
-     *   wcmd 在 wref 上大幅摆动/高频抖 → 增益过大 / 低通不够
-     *   th 收敛但 yaw 有恒差 → 前馈或零偏问题 */
-    {
-        static uint16_t s_cnt = 0u;
-        if (++s_cnt >= 5u) {                 /* 10ms × 5 = 50ms = 20Hz */
-            AngleTelem_t t;
-            s_cnt = 0u;
-            Angle_GetTelem(&t);
-            printf("[YAW] tick=%lu th=%+.3f wm=%+.3f wcmd=%+.3f yaw=%+.3f e=%+.3f\r\n",
-                   (unsigned long)t.tick, t.th_ref, t.w_meas,
-                   t.cmd_w, t.yaw_meas, t.e_th);
-        }
-    }
+    // {
+    //     static uint16_t s_cnt = 0u;
+    //     if (++s_cnt >= 5u) {                 /* 10ms × 5 = 50ms = 20Hz */
+    //         AngleTelem_t t;
+    //         s_cnt = 0u;
+    //         Angle_GetTelem(&t);
+    //         printf("[YAW] tick=%lu th=%+.3f wm=%+.3f wcmd=%+.3f yaw=%+.3f e=%+.3f\r\n",
+    //                (unsigned long)t.tick, t.th_ref, t.w_meas,
+    //                t.cmd_w, t.yaw_meas, t.e_th);
+    //     }
+    // }
 
     MSP_Color_DebugPoll();      /* 打印 [MSP-RX] color='r' rgb_raw="2003040" */
     osDelay(10);
@@ -483,8 +476,6 @@ uint8_t key_StartOK=0;
   {
     Key_Update();
     // MSP_Color_Take(&test);
-    /* 用 Key_WasPressed (边沿, 读后清) 而不是 Key_IsPressed (电平):
-     * 后者只要按键按着就恒真, 每 10ms 触发一次, 每圈都把流程拽回中继站。 */
     if (Key_WasReleased(KEY_START) && !BlockCollect_IsRunning() && !key_StartOK)
     {
       printf("[KEY] 启动键 -> NLF_Request(Event_Collect_L)\r\n");

@@ -238,6 +238,11 @@ static bool    s_flow_seeded = false; /* NF_FlowSeed() 的一次性门闩 */
  *  没有这道超时流程会永久卡死在这里。 */
 #define NF_CIRCLE_TIMEOUT_MS   60000u
 
+/** 找圆失败时「退回上一个点位重跑」的次数上限。
+ *  到顶了还没找到就回老路: 放弃本拍, 继续 Navigation。
+ *  @note **必须设上限** —— 圆一直识别不到的话, 退回去也会再超时, 不封顶就是死循环。 */
+#define NF_CIRCLE_RETRY_MAX    3u
+
 /** 上电是否自动开跑。0 = 等调度器收到事件再跑。 */
 #ifndef NF_AUTOSTART
 #define NF_AUTOSTART  0
@@ -457,7 +462,7 @@ static void NF_Stage_Navigation(void)
     bool arrived = NF_RouteStep();
 
     if (arrived && !Nav_LastAborted() && NF_NeedCreep(Nav_LastWaypointNo())) {
-        osDelay(100);
+        osDelay(200);
         NF_CreepForward();
     }
 
@@ -558,7 +563,7 @@ static void NF_Stage_FindCircle(void)
 
     if (TT_RotateByQR()) {
         printf("[FLOW] FindCircle %f,%f 转盘物理槽 %u\r\n",g_circle_avg_x,g_circle_avg_y, (unsigned)TT_CurrentSlot());
-        Place('O', g_circle_avg_x, g_circle_avg_y, 50u, TT_CurrentSlot());
+        Place('O', g_circle_avg_x, g_circle_avg_y, 48u, TT_CurrentSlot());
     } else {
         printf("[FLOW] FindCircle: 该物块在 g_tt 里找不到或已放完, 跳过\r\n");
     }

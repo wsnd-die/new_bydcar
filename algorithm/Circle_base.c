@@ -18,7 +18,7 @@ char  g_circle_dir = '?';
 float g_circle_k = 0.0f;
 
 
-#define CIRCLE_XY_FAST_TH   15.0f   /* 偏差阈值 (像素) */
+#define CIRCLE_XY_FAST_TH   23.0f   /* 偏差阈值 (像素) */
 #define CIRCLE_XY_V_FAST    0.003f   /* 系数: 偏差 > 10px 时 (m/s per px) */
 #define CIRCLE_XY_V_SLOW    0.0012f   /* 系数: 偏差 ≤ 10px 时 (m/s per px) */
 
@@ -47,8 +47,6 @@ void Circle_Follow(void)
     if (NX_GetCircleDir(&dir)) {
         s_last_dir = dir;
     }
-
-
     if (NX_GetCirclepos(&cx, &cy)) {
         s_last_cx = cx;
         s_last_cy = cy;
@@ -83,10 +81,6 @@ void Circle_Follow(void)
         s_sum_y = 0.0f;
         g_circle_dir = dir;
     }
-    /*
-  * 串来的坐标为cx为左右，cy为上下，cx<0为左，cy<0为下
-  */
-
 
         g_circle_vx=cy*g_circle_k;
         g_circle_vy= cx*g_circle_k;
