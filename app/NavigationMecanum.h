@@ -106,8 +106,8 @@ extern volatile uint8_t g_nav_running;
 
 #define NAV_SWITCH_LO   0.3f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
 #define NAV_SWITCH_HI   0.7f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
-#define NAV_CREEP_X_V   0.57f   /* X 轴近场爬行速度上限 m/s —— **默认值** */
-#define NAV_CREEP_Y_V   0.57f   /* Y 轴近场爬行速度上限 m/s —— **默认值** */
+#define NAV_CREEP_X_V   0.52f   /* X 轴近场爬行速度上限 m/s —— **默认值** */
+#define NAV_CREEP_Y_V   0.52f   /* Y 轴近场爬行速度上限 m/s —— **默认值** */
 
 
 #define NAV_SLOW_WP_IDX   7u     /* "12 摆放e 点" (g_waypoints[] 下标 7) */

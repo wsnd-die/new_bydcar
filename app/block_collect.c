@@ -13,6 +13,8 @@
 #include "ColorIdentif.h"     /* g_tt */
 #include "NX_uart.h"          /* NX_GetTrophyRank */
 #include "worker_task.h"      /* Route_AbortRequest —— IR 进料推进导航 (V1.23.0) */
+#include "ops9_g491_uart3.h"  /* locator_ops9 —— 物料分支改按车体 X 触发 (V1.33.4) */
+#include "pose_data.h"        /* PoseData_t */
 
 /* ================================================================
  * 时序常量 —— ★ 全部是占位值, 上机实测后调
@@ -20,13 +22,50 @@
 
 /** 转盘/夹爪动作走完之后等机构停稳, 再去读。读早了两样都会读到中途值。 */
 #define COLLECT_SETTLE_MS        100u
-/** 等一个物块进料的上限。超时则该槽不写数据, 直接跳下一槽。
- *  @note 奖杯分支的名次投票就发生在这一段等待里, 所以它同时是投票窗口的长度。 */
-#define COLLECT_IR_TIMEOUT_MS   5000u
+/** **X 模式**下 `wait_block_entered()` 的**最终硬上限** —— 只用来防死等。
+ *
+ *  物料分支由两个条件之一退出: ① 对射管识别到物块 (**主判据**); ② 车体 X 到达
+ *  该槽的触发点 `COLLECT_TRIGGER_X[]` (V1.33.4 起取代原来那个"等满固定时间就
+ *  放弃")。这道时间上限只在 **OPS9 离线、`pose.x` 冻结** 时才用得上 —— 那时 X
+ *  永远等不到, 不设上限 `gripper_task` 会永久卡死。
+ *  @note 奖杯分支**不用这个**, 它走 `COLLECT_IR_TIMEOUT_MS`。 */
+#define COLLECT_IR_HARD_TIMEOUT_MS   5000u
 
-/* ================================================================
- * 状态
- * ================================================================ */
+/** **奖杯分支**专用: 等满这么久还没等到 IR 就放弃 (`COLLECT_X_OFF` 那条路)。
+ *  @note 这同时是**名次投票窗口**的长度 —— **必须固定**, 票数不能被车速左右。 */
+#define COLLECT_IR_TIMEOUT_MS    5000u
+
+/** 传给 `wait_block_entered()` 表示 "**不按 X 退出**, 按 `timeout_ms` 等满"。
+ *  用一个大负数而不是 0 —— X 坐标本身可以是 0, 不能拿 0 当哨兵。 */
+#define COLLECT_X_OFF            (-1.0e30f)
+
+/** 物料采集: 每个转盘槽的**车体 X 坐标触发点** (世界系, m)。
+ *
+ *  物料分支的**第二个触发条件**(第一个是对射管) —— 车开到 `pose.x <= 表里的值`,
+ *  **不管 IR 响没响**, 都照常「夹紧 + 识别」, 然后转下一槽。
+ *
+ *  下标 = **转盘槽号 (1~5)**, 与 `block_collect.h` 的 `CONE_SLOT` /
+ *  `BLOCK_FIRST_SLOT` / `BLOCK_LAST_SLOT` 一致; `[0]` 未用。
+ *
+ *  ★ 现值是借用 e/d/c/b/a 那五个物料点的 X, **待现场示教**。
+ *    这条路线 X 是**递减**的, 所以表里必须**递减**(判据是 `<=`)。
+ *  @warning 这段采集是**边走圆弧边收**的, 而圆弧上 `pose.x` **不单调**
+ *           (绕一圈时先减后增) ⇒ 如果某个槽轮到等待时 X 已经比触发点还小,
+ *           会**立刻**判定到点、马上夹 —— 夹到的可能不是那个物块。
+ *           真跑弧的话, 要么改直线推进, 要么改用与路径强相关的判据(已扫弧长)。 */
+static const float COLLECT_TRIGGER_X[] = {
+    0.0f,
+    1.731493f,
+    1.604586f,
+    1.228177f,
+    0.795644f,
+    0.350772f,
+};
+//{   1.801493f, 0.768879f, 1.459011f }, /*  7 e 点 */
+// {   1.674586f, 1.154120f, 2.231404f }, /*  8 d 点 */
+// {   1.308177f, 1.418482f, 2.770012f }, /*  9 c 点 */
+// {   0.865644f, 1.449459f,-2.979479f }, /* 10 b 点 */
+// {   0.450772f, 1.269985f,-2.411954f }, /* 11 a 点 */
 
 static volatile bool s_req     = false;   /* 有采集请求待处理 */
 static volatile bool s_running = false;
@@ -57,14 +96,25 @@ static uint8_t trophy_char_to_rank(char ch)
 }
 
 /**
- * @brief 等一个物块完全进来, 带超时; 顺带在等待期间给 NX 报的奖杯名次投票。
+ * @brief 等一个物块完全进来; 顺带在等待期间给 NX 报的奖杯名次投票。
  *
- * @param timeout_ms  等物块进来的上限。
- * @param rank_out    非空时: 对这段等待里 NX 报的名次**投票**, 物块进来时把票多的
+ * **主判据永远是 IR** —— `IR_ObjectEntered()` 一响就返回 true, 逻辑一点没动。
+ * **退出兜底有两种, 由 `x_trigger` 选** (V1.33.4):
+ *   ① `x_trigger` 是具体坐标 (**物料分支**) → **车体 X 到点**就返回 false。
+ *      取代原来的"等满固定时间": 车都开过这个位置了, 再等也没意义。
+ *      另有一道 `COLLECT_IR_HARD_TIMEOUT_MS` 硬上限防死等。
+ *   ② `x_trigger == COLLECT_X_OFF` (**奖杯分支**) → **等满 `timeout_ms`** 才返回
+ *      false, 沿用旧行为。奖杯的名次投票窗口就是这一段, 长度必须固定,
+ *      票数才不会被"车开得快慢"左右。
+ *
+ * @param x_trigger  该槽的车体 X 触发点 (m), 取自 `COLLECT_TRIGGER_X[]`。
+ *                   传 `COLLECT_X_OFF` = 不按 X 退出, 改按时间。
+ * @param timeout_ms **只在 `x_trigger == COLLECT_X_OFF` 时有意义**。
+ * @param rank_out   非空时: 对这段等待里 NX 报的名次**投票**, 物块进来时把票多的
  *                    那个写入 (1=冠军 2=亚军 3=季军, 与 Jang_type 同编码);
  *                    **一票都没有时写 0**。传 NULL 表示不关心名次 (物料分支用)。
  *                    NX 发的是字母 'a'/'b'/'c', 经 trophy_char_to_rank() 换算。
- * @retval true=物块进来了; false=超时。
+ * @retval true=物块进来了; false=X 到点 / 等满时间 / 硬超时。
  *
  * @note  **IR_ObjectEntered() 全工程只能有这一个调用者** —— 它内部有个 static
  *        的上一拍状态 (collect_ir.c 的 ir_last), 两个调用者会互相破坏。
@@ -73,16 +123,19 @@ static uint8_t trophy_char_to_rank(char ch)
  *        可能抖动或中途跳变。把「物块完全进来之前这段时间」收到的名次全数一遍
  *        再取多数, 比只认最后一帧稳。**投票窗口就是本函数等待的那一整段** ——
  *        转盘已经转到位、物块还没完全进来的时候。
+ *        ⚠ 正因如此, **奖杯分支必须走 `COLLECT_X_OFF` 那条(等满固定时间)** ——
+ *        窗口长度一变, 票数就跟着变。
  * @note  开始投票前会**先丢掉一帧残留** —— 上一轮的名次帧若还挂在 trophy_fresh
  *        上, 不清掉会被算进这一轮的票。
  * @note  **NX_GetTrophyRank() 是消费式的**, 全工程只有这里调 (FC_TASK 里原来
  *        那份调试打印已经摘掉, 否则两边抢帧)。
  */
-static bool wait_block_entered(uint32_t timeout_ms, uint8_t *rank_out)
+static bool wait_block_entered(float x_trigger, uint32_t timeout_ms, uint8_t *rank_out)
 {
     uint32_t t0 = HAL_GetTick();
     uint16_t votes[4] = { 0u, 0u, 0u, 0u };   /* 下标 1~3 对应名次 1~3 */
     char     r;
+    PoseData_t p;
 
     if (rank_out) {
         *rank_out = 0u;
@@ -118,9 +171,32 @@ static bool wait_block_entered(uint32_t timeout_ms, uint8_t *rank_out)
             return true;
         }
 
-        if ((HAL_GetTick() - t0) > timeout_ms) {
-            return false;
+        /* ============ 触发条件 ②: 车体 X 到点 (V1.33.4) ============ */
+        if (x_trigger > COLLECT_X_OFF) {
+            /* ---- 触发条件 ②: 车体 X 到点 (V1.33.4) ----
+             * 车开到该槽的触发点, **不管 IR 响没响, 都算"可以夹了"** ——
+             * 照常夹紧 + 识别 + 转下一槽。(这条路线 X 递减, 所以判 `<=`。) */
+            locator_ops9.get_pose(&p);
+            if (p.valid && p.x <= x_trigger) {
+                printf("[COLLECT] x=%.2f 到点 (<=%.2f), 正常夹取\r\n",
+                       p.x, x_trigger);
+                return true;
+            }
+
+            /* 挂死保护: OPS9 离线时 pose.x 会冻结, 永远等不到位 —— 正常跑不到这里 */
+            if ((HAL_GetTick() - t0) > COLLECT_IR_HARD_TIMEOUT_MS) {
+                printf("[COLLECT] 等 X 超时 %ums, 本槽不再等\r\n",
+                       (unsigned)COLLECT_IR_HARD_TIMEOUT_MS);
+                return false;
+            }
+        } else {
+            /* ---- 奖杯分支: 等满固定时间 ----
+             * 这一段就是名次投票窗口, 长度必须固定 (见函数头 ⚠)。 */
+            if ((HAL_GetTick() - t0) > timeout_ms) {
+                return false;
+            }
         }
+
         osDelay(10);
     }
 }
@@ -267,13 +343,21 @@ static void trophy_fill_missing(void)
 }
 
 /**
- * @brief 跑完一轮: 圆锥先过, 然后槽 2~5 依次「夹紧 → 转一步 → 识别」。
+ * @brief 跑完一轮: 圆锥先过, 然后槽 1~5 依次「夹紧 → 转一步 → 识别」。
  *
- *      圆锥进 → IR → 转到槽 2
- *      块2进  → IR → 夹紧槽2 → 转到槽3 → 识别槽2
- *      块3进  → IR → 夹紧槽3 → 转到槽4 → 识别槽3
- *      块4进  → IR → 夹紧槽4 → 转到槽5 → 识别槽4
- *      块5进  → IR → 夹紧槽5 → 转 340°关门 → 识别槽5
+ *  **两个分支都用 `wait_block_entered()`**, 主判据都是**对射管 (IR)**;
+ *  区别只在**退出兜底**:
+ *
+ *  **物料分支** —— 车体 X 到点就收 (`COLLECT_TRIGGER_X[]`, 全是待示教占位值):
+ *      等锥: IR 触发 或 车 x ≥ [1]  → 转到槽 2
+ *      等槽2: IR 触发 或 车 x ≥ [2] → 夹紧槽2 → 转到槽3 → 识别槽2
+ *      等槽3: IR 触发 或 车 x ≥ [3] → 夹紧槽3 → 转到槽4 → 识别槽3
+ *      等槽4: IR 触发 或 车 x ≥ [4] → 夹紧槽4 → 转到槽5 → 识别槽4
+ *      等槽5: IR 触发 或 车 x ≥ [5] → 夹紧槽5 → 转 340°关门 → 识别槽5
+ *      传 `rank_out = NULL` (不投票)。
+ *
+ *  **奖杯分支** —— **不按 X**, 等满 `COLLECT_IR_TIMEOUT_MS` (旧行为), 因为那段
+ *  等待就是名次投票窗口。传 `COLLECT_X_OFF` + `&rank`。
  */
 static void collect_slots(void)
 {
@@ -282,8 +366,8 @@ static void collect_slots(void)
     if (s_stage == COLLECT_BLOCK)
     {
         (void)BlockBasic_TurntableTo(CONE_SLOT);
-        printf("[COLLECT] waiting cone\r\n");
-        if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
+        printf("[COLLECT] waiting cone (IR 或 x>=%.2f)\r\n", COLLECT_TRIGGER_X[CONE_SLOT]);
+        if (!wait_block_entered(COLLECT_TRIGGER_X[CONE_SLOT], 0u, NULL)) {
             printf("[COLLECT] no cone, abort\r\n");
         }
 
@@ -292,12 +376,14 @@ static void collect_slots(void)
 
         for (uint8_t slot = BLOCK_FIRST_SLOT; slot <= BLOCK_LAST_SLOT; slot++)
         {
-            if (wait_block_entered(COLLECT_IR_TIMEOUT_MS, NULL)) {   /* NULL = 不投票 */
+            printf("[COLLECT] waiting slot %u (IR 或 x>=%.2f)\r\n",
+                   (unsigned)slot, COLLECT_TRIGGER_X[slot]);
 
+            if (wait_block_entered(COLLECT_X_OFF, COLLECT_IR_TIMEOUT_MS, NULL)) {
                 (void)BlockBasic_GripperClamp(slot);
                 identify_slot(slot);
             } else {
-                printf("[COLLECT] slot %u: no block, skip\r\n", (unsigned)slot);
+                printf("[COLLECT] slot %u: 没等到物块, skip\r\n", (unsigned)slot);
             }
 
 
@@ -320,7 +406,7 @@ static void collect_slots(void)
         for (uint8_t slot = TROPHY_FIRST_SLOT; slot <= TROPHY_LAST_SLOT; slot++)
         {
             uint8_t rank = 0u;
-            if (!wait_block_entered(COLLECT_IR_TIMEOUT_MS, &rank)) {
+            if (!wait_block_entered(COLLECT_X_OFF, COLLECT_IR_TIMEOUT_MS, &rank)) {
                 printf("[COLLECT] trophy slot %u: no block, skip\r\n", (unsigned)slot);
                 continue;
             }

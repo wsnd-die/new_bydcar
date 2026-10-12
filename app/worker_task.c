@@ -457,7 +457,7 @@ static void NF_Stage_Navigation(void)
     bool arrived = NF_RouteStep();
 
     if (arrived && !Nav_LastAborted() && NF_NeedCreep(Nav_LastWaypointNo())) {
-        // osDelay(200);
+        osDelay(100);
         NF_CreepForward();
     }
 
@@ -667,7 +667,7 @@ static void NF_Stage_GoHome(void)
          * `NAV_HOME_SPEED` 在 NavigationMecanum.h, 只改那一个数就调快慢。
          * Nav_GoToWorld() 三个出口会自动还原成 1.0, 这里**不用**恢复。 */
         g_nav_leg_speed = NAV_HOME_SPEED;
-        (void)Nav_GoToWorld(0.0f, 0.0f ,0.0f);
+        (void)Nav_GoToWorld(0.03f, 0.03f ,0.0f);
     }
 
     AG_Stop();

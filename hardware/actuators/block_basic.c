@@ -429,7 +429,7 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
         {
             if (slot == 1)
         {
-            if (!Mecanum_MoveBodyPos(fwd+0.012, left, PLACE_MOVE_TIMEOUT_MS)) {
+            if (!Mecanum_MoveBodyPos(fwd+0.01, 0, PLACE_MOVE_TIMEOUT_MS)) {
                     printf("[PLACE] 前移没等齐到位 (超时)\r\n");
                 }
                 BlockBasic_GripperRelease(slot);
