@@ -97,23 +97,31 @@ extern volatile uint8_t g_nav_running;
 #endif
 #define NAV_KP_X_LIN    3.3f
 #define NAV_KP_Y_LIN    5.3f
-#define NAV_KD_X_LIN    3.05f
-#define NAV_KD_Y_LIN    4.05f
-#define NAV_BRK_X       0.5f
-#define NAV_BRK_Y       0.6f
-#define NAV_ARRIVE_VMAX  0.6f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
-                                   * 否则会在容差边缘一直判定不上、卡着不走 */
+#define NAV_KD_X_LIN    0.5f
+#define NAV_KD_Y_LIN    1.5f
+#define NAV_BRK_X       0.45f
+#define NAV_BRK_Y       0.55f
+#define NAV_ARRIVE_VMAX  0.6f
 
 
 #define NAV_SWITCH_LO   0.3f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
-#define NAV_SWITCH_HI   0.65f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
-#define NAV_CREEP_X_V   0.5f   /* X 轴近场爬行速度上限 m/s */
-#define NAV_CREEP_Y_V   0.5f   /* Y 轴近场爬行速度上限 m/s */
+#define NAV_SWITCH_HI   0.7f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
+#define NAV_CREEP_X_V   0.57f   /* X 轴近场爬行速度上限 m/s —— **默认值** */
+#define NAV_CREEP_Y_V   0.57f   /* Y 轴近场爬行速度上限 m/s —— **默认值** */
+
+
+#define NAV_SLOW_WP_IDX   7u     /* "12 摆放e 点" (g_waypoints[] 下标 7) */
+#define NAV_SLOW_WP_IDX2  6u
+#define NAV_SLOW_WP_LIM   0.4f   /* 走这个点时的近场爬行上限 m/s (X/Y 共用) */
+
+#define NAV_HOME_SPEED   1.3f
+
+extern volatile float g_nav_leg_speed;
 
 
 #define NAV_ARC_V         0.55f    /* 圆弧线速度 m/s */
 #define NAV_ARC_ACC       0.9f     /* 线速度软启动加速度 m/s² */
-#define NAV_ARC_KP_R      1.2f     /* 径向误差修正增益 1/s (把车拉回圆上) */
+#define NAV_ARC_KP_R      2.6f     /* 径向误差修正增益 1/s (把车拉回圆上) */
 #define NAV_ARC_VMAX_R    0.5f     /* 径向修正速度限幅 m/s */
 
 
@@ -146,6 +154,9 @@ extern uint8_t     s_idx;
  * @return false      超时（NAV_TIMEOUT_MS，含反馈长期无效）
  */
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
+
+
+void Nav_SetLegSpeed(float k);
 
 /**
  * @brief 分点导航 —— 按 g_waypoints[] 逐点推进

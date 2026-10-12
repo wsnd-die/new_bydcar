@@ -457,7 +457,7 @@ static void NF_Stage_Navigation(void)
     bool arrived = NF_RouteStep();
 
     if (arrived && !Nav_LastAborted() && NF_NeedCreep(Nav_LastWaypointNo())) {
-        osDelay(200);
+        // osDelay(200);
         NF_CreepForward();
     }
 
@@ -542,7 +542,7 @@ static void NF_Stage_FindCircle(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-    BlockBasic_TurntableTo(BLOCK_LAST_SLOT);
+    BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
         Circle_Follow();
@@ -662,6 +662,11 @@ static void NF_Stage_GoHome(void)
     g_route_abort = 0u;
 
     if (g_waypoint_count > 0u) {
+        /* 回家是**长距离空驶、不在乎末端精度** —— 单独放大本段速度倍率
+         * (VMAX/BRK/近场爬行上限一起乘, 航向环不受影响)。
+         * `NAV_HOME_SPEED` 在 NavigationMecanum.h, 只改那一个数就调快慢。
+         * Nav_GoToWorld() 三个出口会自动还原成 1.0, 这里**不用**恢复。 */
+        g_nav_leg_speed = NAV_HOME_SPEED;
         (void)Nav_GoToWorld(0.0f, 0.0f ,0.0f);
     }
 
@@ -706,7 +711,7 @@ void NLF_RunFlow(SystemMode_t mode)
 
         case Event_NavCircleL:
             /* 跑一段定半径圆弧  */
-            Nav_Cricle(Nav_CricleL ,  0.93f, 170*NAV_DEG2RAD );
+            Nav_Cricle(Nav_CricleL ,  0.91f, 170*NAV_DEG2RAD );
             break;
         case Event_NavCircleR:
             Nav_Cricle(Nav_CricleR , 0.93f ,170*NAV_DEG2RAD );

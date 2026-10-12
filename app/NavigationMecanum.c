@@ -1,6 +1,9 @@
 
 #include "Common_used.h"          /* libc + HAL + FreeRTOS + osDelay */
 #include "NavigationMecanum.h"
+
+#include <iso646.h>
+
 #include "mecanum.h"              /* MecanumResult / Mecanum_Calc_Full_V / Mecanum_Vel_Execute */
 #include "pid.h"                  /* pid_type_def */
 #include "worker_task.h"          /* g_angle_ctrl_enable (角度环契约量) */
@@ -20,15 +23,15 @@
 World_Dir_t Self_Dir = {0.0f, 0.0f, 0.0f};
 
 World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
-    {   0.522536f,-1.051990f,-1.089054f }, /*  1 奖杯点 */
+    {   0.492536f,-1.041990f,-1.089054f }, /*  1 奖杯点 */
     {   0.748793f,-1.303468f,-0.455103f }, /*  2 奖杯点 */
     {   1.135373f,-1.413104f, 0.125007f }, /*  3 奖杯点 */
 
-    {   1.733253f,-0.202191f, 0.0f }, /*  4 亚军点 */
-    {   1.729634f, 0.055066f, 0.0f }, /*  5 冠军点 */
-    {   1.713531f, 0.343497f, 0.0f}, /*  6 季军点 */
+    {   1.733253f,-0.222191f, 0.0f }, /*  4 亚军点 */
+    {   1.729634f, 0.075066f, 0.0f }, /*  5 冠军点 */
+    {   1.713531f, 0.323497f, 0.0f}, /*  6 季军点 */
 
-    {   1.9902776f, 0.449762f, 1.500430f},/*圆弧起点*/
+    {   1.9902776f, 0.464762f, 1.520430f},/*圆弧起点*/
     //{   1.801493f, 0.768879f, 1.459011f }, /*  7 e 点 */
     // {   1.674586f, 1.154120f, 2.231404f }, /*  8 d 点 */
     // {   1.308177f, 1.418482f, 2.770012f }, /*  9 c 点 */
@@ -61,9 +64,21 @@ static bool s_nav_aborted = false;
  *  而游标照常 s_idx++ → 平白吃掉一个点位。 */
 volatile uint8_t g_nav_running = 0u;
 
+/** 本段平移速度倍率 (契约量, 见 NavigationMecanum.h)。1.0 = 默认。
+ *  缩放 VMAX / BRK / 近场爬行上限; **航向环不受影响**。
+ *  `Nav_GoToWorld()` 的三个出口各还原一次 —— 调用方不用自己恢复。 */
+volatile float g_nav_leg_speed = 1.0f;
+
 /** 上一次 Nav_FeDuanPoint() **走完**的点号 (1 基); 0 = 没走到 / 路线已走完。
  *  给 worker_task.c 的"到位后向前蹭料"判断点位用 (见 NF_CREEP_WP[])。 */
 static uint8_t s_last_wp = 0u;
+
+/** 当前这一段的近场爬行上限 (m/s)。默认取 `NAV_CREEP_X_V/_Y_V`;
+ *  `Nav_FeDuanPoint()` 遇到 `NAV_SLOW_WP_IDX` 那个点时会临时压低成
+ *  `NAV_SLOW_WP_LIM`, 走完立刻恢复 —— **只在那一次 Nav_GoToWorld() 期间生效**,
+ *  不会泄漏给 `Place()` / `Nav_MoveBody()` / 回家 这些调用者。 */
+static float s_near_lim_x = NAV_CREEP_X_V;
+static float s_near_lim_y = NAV_CREEP_Y_V;
 
 bool Nav_LastAborted(void)
 {
@@ -171,16 +186,18 @@ static float NAV_AxisRef(float err, float v_max, float a_brk, float kp,
     if (choice == 'x')
     {
         float x_v   = kp * err - kd * v_now;            /* 近场律: 线性 P + D  */
-        float x_lim = sqrtf(2.0f * a_brk * ae);         /* 远场律: 制动曲线上限 */
-        x_lim = NAV_CREEP_X_V + (x_lim - NAV_CREEP_X_V) * w;  /* 按 w 混到近场爬行上限 */
+        float x_lim  = sqrtf(2.0f * a_brk * ae);        /* 远场律: 制动曲线上限 */
+        float x_near = s_near_lim_x * g_nav_leg_speed;  /* 近场爬行上限 × 本段倍率 */
+        x_lim = x_near + (x_lim - x_near) * w;          /* 按 w 混到近场爬行上限 */
 
         return NAV_Clamp(NAV_Clamp(x_v, -x_lim, x_lim), -v_max, v_max);
     }
     if (choice == 'y')
     {
         float y_v   = kp * err - kd * v_now;            /* 近场律: 线性 P + D */
-        float y_lim = sqrtf(2.0f * a_brk * ae);         /* 远场律: 制动曲线上限 */
-        y_lim = NAV_CREEP_Y_V + (y_lim - NAV_CREEP_Y_V) * w;  /* 按 w 混到近场爬行上限 */
+        float y_lim  = sqrtf(2.0f * a_brk * ae);        /* 远场律: 制动曲线上限 */
+        float y_near = s_near_lim_y * g_nav_leg_speed;  /* 近场爬行上限 × 本段倍率 */
+        y_lim = y_near + (y_lim - y_near) * w;          /* 按 w 混到近场爬行上限 */
 
         return NAV_Clamp(NAV_Clamp(y_v, -y_lim, y_lim), -v_max, v_max);
     }
@@ -202,17 +219,11 @@ static void NAV_Stop(void)
 
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 {
-    /* 0. 清掉上一次的打断标记 —— 本次的结果只反映本次 */
     s_nav_aborted = false;
 
-    /* 1. 夺回电机控制权: 按契约关角度环, 等 FC_TASK 下降沿零速
-     *    (worker_task.c:28-35) */
     g_angle_ctrl_enable = 0;
-    osDelay(20);
+    osDelay(10);
 
-    /* 2. x/y 轴默认走制动曲线规划 (NAV_XY_PROFILE=1), 不再用 PID_calc。
-     *    yaw 本来就不用它: PID_calc 内部误差不 wrap, 跨 ±π 会跳 2π, 手写。
-     *    NAV_XY_PROFILE=0 时退回旧的位置 PD, 方便 A/B 对比。 */
 #if !NAV_XY_PROFILE
     pid_type_def pid_x, pid_y;
     fp32 k_x[3] = {2.3f, 0.0f, 2.91f};
@@ -221,7 +232,6 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     PID_init(&pid_y, PID_POSITION, k_y, NAV_VMAX_Y, 0.0f);
 #endif
 
-    /* 3. 软启动斜坡状态 (世界系) */
     float vx_cmd = 0.0f, vy_cmd = 0.0f;
 
     uint32_t t0 = osKernelGetTickCount();
@@ -236,14 +246,12 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
     uint8_t s0_set = 0u;
     float   s0x = 0.0f, s0y = 0.0f, s0yaw = 0.0f;
-    float   ovs_x = 0.0f, ovs_y = 0.0f, ovs_yaw = 0.0f;   /* ★ ovs_yaw 本次新增 */
+    float   ovs_x = 0.0f, ovs_y = 0.0f, ovs_yaw = 0.0f;
     float   last_ex = 0.0f, last_ey = 0.0f, last_eyaw = 0.0f;
 
     PoseData_t pose;
-    uint8_t    heading_armed = 0u;   /* 串级航向环是否已武装 (首个有效位姿) */
+    uint8_t    heading_armed = 0u;
 
-    /* 从这一拍起本段才算"在跑"。此前(含上面那 20ms 让路)到达的打断与本节无关,
-     * 由 Route_AbortRequest() 直接丢弃 —— 见该函数的说明。 */
     g_nav_running = 1u;
 
     for (;;)
@@ -259,8 +267,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             t_prev = t_now;
         }
 
-        /* V1.23.0 打断: 外部 (IR 进料) 要求立刻放弃当前这一段。
-         * 消费掉这次请求后按"未到达"返回, 由 Nav_LastAborted() 区分超时。 */
+
         if (g_route_abort)
         {
             g_route_abort = 0u;
@@ -272,6 +279,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             s_nav_aborted = true;
             Angle_Disable();      /* 关串级航向环 (出口一: 被打断) */
             g_nav_running = 0u;
+            g_nav_leg_speed = 1.0f;   /* 本段倍率用完即还原 */
             return false;
         }
 
@@ -334,9 +342,13 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
 #if NAV_XY_PROFILE
 
-            float vx_ref = NAV_AxisRef(ex, NAV_VMAX_X, NAV_BRK_X, NAV_KP_X_LIN,
+            /* VMAX / BRK 乘本段倍率 (g_nav_leg_speed); 爬行上限在 NAV_AxisRef 里乘。
+             * ★ KP / KD 不乘 —— 那是"控制律形状", 不是"快慢"。 */
+            float vx_ref = NAV_AxisRef(ex, NAV_VMAX_X * g_nav_leg_speed,
+                                       NAV_BRK_X * g_nav_leg_speed, NAV_KP_X_LIN,
                                        NAV_KD_X_LIN, ex_x, 'x');
-            float vy_ref = NAV_AxisRef(ey, NAV_VMAX_Y, NAV_BRK_Y, NAV_KP_Y_LIN,
+            float vy_ref = NAV_AxisRef(ey, NAV_VMAX_Y * g_nav_leg_speed,
+                                       NAV_BRK_Y * g_nav_leg_speed, NAV_KP_Y_LIN,
                                        NAV_KD_Y_LIN, ex_y, 'y');
 #else
             float vx_ref = PID_calc(&pid_x, pose.x, target_x);
@@ -390,6 +402,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             }
             Angle_Disable();      /* 关串级航向环 (出口二: 超时) */
             g_nav_running = 0u;
+            g_nav_leg_speed = 1.0f;   /* 本段倍率用完即还原 */
             return false;
         }
 
@@ -401,6 +414,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
     Angle_Disable();          /* 关串级航向环 (出口三: 到达) */
     g_nav_running = 0u;
+    g_nav_leg_speed = 1.0f;   /* 本段倍率用完即还原 */
     return true;
 }
 
@@ -452,9 +466,29 @@ bool Nav_FeDuanPoint(void)
 
     s_last_wp = (uint8_t)(s_idx + 1u);  /* 本段走的点号 (1 基), 给蹭料判断用 */
 
-    if (!Nav_GoToWorld(g_waypoints[s_idx].x,
-                       g_waypoints[s_idx].y,
-                       g_waypoints[s_idx].yaw)) {
+
+    if (s_idx == (uint8_t)NAV_SLOW_WP_IDX) {
+        s_near_lim_x = NAV_SLOW_WP_LIM;
+        s_near_lim_y = NAV_SLOW_WP_LIM;
+    }
+    if (s_idx == (uint8_t)NAV_SLOW_WP_IDX2)
+    {
+        s_near_lim_x = 0.35f;
+        s_near_lim_y = 0.35f;
+    }
+    else {
+        s_near_lim_x = NAV_CREEP_X_V;
+        s_near_lim_y = NAV_CREEP_Y_V;
+    }
+
+    bool ok = Nav_GoToWorld(g_waypoints[s_idx].x,
+                            g_waypoints[s_idx].y,
+                            g_waypoints[s_idx].yaw);
+
+    s_near_lim_x = NAV_CREEP_X_V;       /* 恢复默认, 免泄漏到别的调用者 */
+    s_near_lim_y = NAV_CREEP_Y_V;
+
+    if (!ok) {
         if (Nav_LastAborted()) {
             printf("[NAV] 第 %u 点被 IR 打断, 游标 -> %u\r\n",
                    (unsigned)s_idx, (unsigned)(s_idx + 1u));
@@ -604,7 +638,7 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
             break;
         }
 
-        osDelay(NAV_LOOP_TICKS);
+        osDelay(10);
     }
 
     NAV_Stop();

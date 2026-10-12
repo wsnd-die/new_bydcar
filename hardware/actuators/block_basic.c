@@ -403,7 +403,7 @@ void Servo_SetAngle(float Angle)
 
 /** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
-#define PLACE_MOVE_TIMEOUT_MS   600u
+#define PLACE_MOVE_TIMEOUT_MS   650
 
 void Place(char dir,float x,float y,int16_t height,uint8_t slot)
 {
@@ -419,7 +419,7 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
             }
             BlockBasic_GripperRelease(slot);
             BlockBasic_LiftTo(DOWN, abs(height));
-            // osDelay(100);
+            osDelay(150);
             /* 后退 */
             if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
                 printf("[PLACE] 后退没等齐到位 (超时)\r\n");
@@ -429,7 +429,7 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
         {
             if (slot == 1)
         {
-            if (!Mecanum_MoveBodyPos(fwd+0.008, left, PLACE_MOVE_TIMEOUT_MS)) {
+            if (!Mecanum_MoveBodyPos(fwd+0.012, left, PLACE_MOVE_TIMEOUT_MS)) {
                     printf("[PLACE] 前移没等齐到位 (超时)\r\n");
                 }
                 BlockBasic_GripperRelease(slot);
@@ -446,7 +446,7 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
                 BlockBasic_LiftTo(UP, abs(height));
                 osDelay(650);
                 TT_RotateByQR();
-                osDelay(290);
+                osDelay(300);
                 BlockBasic_GripperRelease(TT_CurrentSlot());
                 osDelay(30);
                 /* 后退 0.05 m (车体 -X 方向) */

@@ -28,7 +28,7 @@
 
 /* ---- 外环: 角度 → 角速度指令 ---- */
 #define ANG_KP_TH          8.0f     /* 外环 P (1/s) */
-#define ANG_W_CMD_MAX      7.5f      /* 外环输出限幅 (rad/s) */
+#define ANG_W_CMD_MAX      6.5f      /* 外环输出限幅 (rad/s) */
 #define ANG_YAW_DEADBAND   0.0175f   /* 外环角度死区 (rad ≈ 1°) */
 
 /* ---- 内环: 角速度 → 电机指令 ---- */
@@ -37,7 +37,7 @@
 #define ANG_KI_W           0.00006f
 
 #define ANG_IW_MAX         0.5f      /* 内环积分限幅 */
-#define ANG_W_OUT_MAX      3.5f      /* 内环输出限幅 (rad/s) */
+#define ANG_W_OUT_MAX      2.5f      /* 内环输出限幅 (rad/s) */
 
 /* ============================================================
  * 对外接口
