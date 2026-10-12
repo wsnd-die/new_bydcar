@@ -68,18 +68,16 @@ extern volatile uint8_t g_nav_running;
 #define NAV_MAX_INVALID_TICKS  20u     /* OPS9 离线容忍 0.3s, 超限零速保持 */
 
 /* ============================================================
- * 平移轴速度规划 —— V1.24.1
+ * 平移轴速度规划 —— V1.33.3 起为**固定距离硬切换**
  *
- *      v_ref = clamp(Kp·e, ±√(2·a·|e|), ±V_max)
+ *      |e| ≤ NAV_SWITCH_D : PID         v = Kp·e − Kd·v_now
+ *      |e| > NAV_SWITCH_D : 制动曲线     v = ±√(2·a_brk·|e|)   即 v² = 2·a·x
  *
- * 近场线性 P: 和原来的纯 P 一样温和、过零连续, 不会在点位上抖。
- * 远场制动曲线做**上限**: |v| ≤ √(2·a·|e|) 即"此刻还刹得住", 补上纯 P 缺的
- * 减速约束, 使提速与不过冲不再矛盾。
+ * 近场交给 PID 收敛到点上; 远场按"此刻还刹得住"给速度, 补上纯 P 缺的减速约束。
+ * 曲线**只用在远场** —— 它在 e→0 处等效增益发散, 当全程参考会"到点来回晃"
+ * (V1.24.0 踩过)。
  *
- * @warning 曲线**只能当上限, 不能当参考** (V1.24.0 的错就在这): 当参考时它在
- *          e→0 处等效增益发散, 且死区边界是 "0 → √(2·a·deadband)" 的阶跃,
- *          位置噪声一到就变成**到点来回晃**, 比纯 P 还差。
- *
+ * ⚠ 两条律在 |e| = D 处**不连续**, 见下面 NAV_SWITCH_D 的 ★。
  * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
 #ifndef NAV_XY_PROFILE
@@ -97,13 +95,13 @@ extern volatile uint8_t g_nav_running;
 #ifndef NAV_YAW_CASCADE
 #define NAV_YAW_CASCADE  1
 #endif
-#define NAV_KP_X_LIN    5.3f
-#define NAV_KP_Y_LIN    5.3f
-#define NAV_KD_X_LIN    0.4f
-#define NAV_KD_Y_LIN    0.4f
+#define NAV_KP_X_LIN    4.3f
+#define NAV_KP_Y_LIN    4.3f
+#define NAV_KD_X_LIN    1.05f
+#define NAV_KD_Y_LIN    1.05f
 #define NAV_BRK_X       0.6f
 #define NAV_BRK_Y       0.6f
-#define NAV_ARRIVE_VMAX  0.49f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
+#define NAV_ARRIVE_VMAX  0.6f    /* 到位速度门限 m/s: 必须 > Kp·NAV_TOL_XY (=0.08) 留余量,
                                    * 否则会在容差边缘一直判定不上、卡着不走 */
 
 /* ============================================================
@@ -117,9 +115,9 @@ extern volatile uint8_t g_nav_running;
  * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
  * ============================================================ */
 #define NAV_SWITCH_LO   0.25f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
-#define NAV_SWITCH_HI   0.5f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
-#define NAV_CREEP_X_V   0.47f   /* X 轴近场爬行速度上限 m/s */
-#define NAV_CREEP_Y_V   0.47f   /* Y 轴近场爬行速度上限 m/s */
+#define NAV_SWITCH_HI   0.65f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
+#define NAV_CREEP_X_V   0.57f   /* X 轴近场爬行速度上限 m/s */
+#define NAV_CREEP_Y_V   0.57f   /* Y 轴近场爬行速度上限 m/s */
 /* ★ 上面两个爬行上限**必须 < NAV_ARRIVE_VMAX**, 否则到位判据的 `|v| ≤ NAV_ARRIVE_VMAX`
  *   永远满足不了 —— 低速段 v 会收敛到爬行封顶值, 而封顶值比门限还大。 */
 

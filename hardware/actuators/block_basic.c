@@ -403,7 +403,7 @@ void Servo_SetAngle(float Angle)
 
 /** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
-#define PLACE_MOVE_TIMEOUT_MS   600u
+#define PLACE_MOVE_TIMEOUT_MS   700u
 
 void Place(char dir,float x,float y,int16_t height,uint8_t slot)
 {
