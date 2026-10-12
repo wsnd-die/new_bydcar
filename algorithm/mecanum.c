@@ -169,7 +169,7 @@ uint32_t malu_cm_topluse_s(float cm)
  * ================================================================ */
 
 /** 发一个轮子的定距位置指令。dist_m 带符号, >0 = 该轮的"正转"方向。 */
-static void Mecanum_MoveOneWheel(uint8_t addr, float dist_m, uint16_t vel_rpm)
+static void Mecanum_MoveOneWheel(uint8_t addr, float dist_m, uint16_t vel_rpm,uint16_t vel_acc)
 {
     if (fabsf(dist_m) < MEC_POS_MIN_M) {
         return;                     /* 太短, 不值得发, 也免得脉冲数算成 0 */
@@ -190,7 +190,7 @@ static void Mecanum_MoveOneWheel(uint8_t addr, float dist_m, uint16_t vel_rpm)
 
     /* raF = 0 → 相对运动 (走这么多脉冲就停); snF = 0 → 立即执行, 不等同步广播。
      * 四条 CAN 帧前后脚发出去, 间隔亚毫秒级, 定距平移够用。 */
-    Emm_V5_Pos_Control(addr, dir, vel_rpm, MEC_POS_ACC, clk, 0, 0);
+    Emm_V5_Pos_Control(addr, dir, vel_rpm, vel_acc, clk, 0, 0);
 }
 
 /** 四个轮子都报到位了吗 (每个轮子一次 CAN 往返, 内部超时 50ms)。 */
@@ -211,24 +211,21 @@ bool Mecanum_MoveBodyPos(float fwd_m, float left_m, uint16_t timeout_ms)
     const float rr = fwd_m - left_m;
 if (fwd_m>=0)
 {
-    Mecanum_MoveOneWheel(1u, fr, MEC_POS_VEL_RPM);   /* 前右 */
-    Mecanum_MoveOneWheel(2u, rl, MEC_POS_VEL_RPM);   /* 后左 */
-    Mecanum_MoveOneWheel(3u, fl, MEC_POS_VEL_RPM);   /* 前左 */
-    Mecanum_MoveOneWheel(4u, rr, MEC_POS_VEL_RPM);   /* 后右 */
+    Mecanum_MoveOneWheel(1u, fr, MEC_POS_VEL_RPM,MEC_POS_ACC);   /* 前右 */
+    Mecanum_MoveOneWheel(2u, rl, MEC_POS_VEL_RPM,MEC_POS_ACC);   /* 后左 */
+    Mecanum_MoveOneWheel(3u, fl, MEC_POS_VEL_RPM,MEC_POS_ACC);   /* 前左 */
+    Mecanum_MoveOneWheel(4u, rr, MEC_POS_VEL_RPM,MEC_POS_ACC);   /* 后右 */
 }
     else
     {
-        Mecanum_MoveOneWheel(1u, fr, MEC_POS_VELh_RPM);   /* 前右 */
-        Mecanum_MoveOneWheel(2u, rl, MEC_POS_VELh_RPM);   /* 后左 */
-        Mecanum_MoveOneWheel(3u, fl, MEC_POS_VELh_RPM);   /* 前左 */
-        Mecanum_MoveOneWheel(4u, rr, MEC_POS_VELh_RPM);   /* 后右 */
+        Mecanum_MoveOneWheel(1u, fr, MEC_POS_VELh_RPM,MEC_POSH_ACC);   /* 前右 */
+        Mecanum_MoveOneWheel(2u, rl, MEC_POS_VELh_RPM,MEC_POSH_ACC);   /* 后左 */
+        Mecanum_MoveOneWheel(3u, fl, MEC_POS_VELh_RPM,MEC_POSH_ACC);   /* 前左 */
+        Mecanum_MoveOneWheel(4u, rr, MEC_POS_VELh_RPM,MEC_POSH_ACC);   /* 后右 */
     }
     if (timeout_ms == 0u) {
         return true;            /* 调用方说不用等 */
     }
-
-
-    osDelay(MEC_POS_START_DELAY_MS);
 
     uint32_t t0 = HAL_GetTick();
     for (;;) {

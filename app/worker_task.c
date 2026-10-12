@@ -542,7 +542,7 @@ static void NF_Stage_FindCircle(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-    BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
+    BlockBasic_TurntableTo(BLOCK_LAST_SLOT);
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
         Circle_Follow();
@@ -615,7 +615,6 @@ static void NF_Stage_PlaceDown(void)
         }
         // osDelay(10);
     }
-
     /* 3) 放置 + 收尾 */
     Place('O', g_circle_avg_x,g_circle_avg_y , NF_PLACE_HEIGHT[(uint8_t)rank], tslot);   /* 奖杯: 松开该奖杯所在的槽 */
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
@@ -636,9 +635,6 @@ static void NF_Start(void)
     SystemMode_t mode = Event_Navigation;      /* 初值只是兜底, 见下 */
 
     if (!NF_DispatchNext(&mode)) {
-        /* 表已跑完: NF_DispatchNext() 返回 false 且**不写 out**,
-         * 原来这里会把未初始化的栈值当阶段号发出去 → 随机跳一个阶段。
-         * 见 clauderecord 2026-10-04 的备注。 */
         printf("[FLOW] 表已跑完, 忽略启动键\r\n");
         return;
     }
