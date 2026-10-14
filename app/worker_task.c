@@ -606,6 +606,7 @@ static void NF_Stage_PlaceDown(void)
             // osDelay(170);
         }
         BlockBasic_TurntableTo(tslot);
+        BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
     }
 

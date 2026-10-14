@@ -43,6 +43,7 @@
 #include "collect_ir.h"
 #include "block_collect.h"  /* BlockCollect_Task (V1.20.0) */
 #include "msp_color.h"
+#include "block_collect.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -132,9 +133,6 @@ const osThreadAttr_t key_Task_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-
-static void servo_set_pos(uint8_t id, uint16_t pos);
-
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -313,28 +311,28 @@ void ops9imu_fuction(void *argument)
     //
     // }
    // printf("xyyaw:%f,%f,%f\r\n",o_pose.x,o_pose.y,o_pose.yaw);
-    {
-      static uint32_t last_ts = 0u, t_last = 0u;
-      static uint32_t nchg = 0u, nw = 0u;
-      static float    sum_w = 0.0f, sum_w2 = 0.0f;
-
-      if (o_pose.timestamp != last_ts) { last_ts = o_pose.timestamp; nchg++; }
-
-      if (o_pose.valid) {                       /* 噪声统计只统计有效帧 */
-        sum_w  += o_pose.wz;
-        sum_w2 += o_pose.wz * o_pose.wz;
-        nw++;
-      }
-    if ((HAL_GetTick() - t_last) >= 1000u) {
-      float mean = (nw > 0u) ? (sum_w  / (float)nw) : 0.0f;
-      float var  = (nw > 0u) ? (sum_w2 / (float)nw - mean * mean) : 0.0f;
-      printf("[OPS9] fs=%luHz  wz: mean=%+.4f sigma=%.4f (n=%lu)  yaw=%.4f\r\n",
-             (unsigned long)nchg, mean,
-             sqrtf(var > 0.0f ? var : 0.0f), (unsigned long)nw, o_pose.yaw);
-      nchg = 0u; nw = 0u; sum_w = 0.0f; sum_w2 = 0.0f;
-      t_last = HAL_GetTick();
-    }
-  }
+    // {
+    //   static uint32_t last_ts = 0u, t_last = 0u;
+    //   static uint32_t nchg = 0u, nw = 0u;
+    //   static float    sum_w = 0.0f, sum_w2 = 0.0f;
+    //
+    //   if (o_pose.timestamp != last_ts) { last_ts = o_pose.timestamp; nchg++; }
+    //
+    //   if (o_pose.valid) {                       /* 噪声统计只统计有效帧 */
+    //     sum_w  += o_pose.wz;
+    //     sum_w2 += o_pose.wz * o_pose.wz;
+    //     nw++;
+    //   }
+    // if ((HAL_GetTick() - t_last) >= 1000u) {
+    //   float mean = (nw > 0u) ? (sum_w  / (float)nw) : 0.0f;
+    //   float var  = (nw > 0u) ? (sum_w2 / (float)nw - mean * mean) : 0.0f;
+    //   printf("[OPS9] fs=%luHz  wz: mean=%+.4f sigma=%.4f (n=%lu)  yaw=%.4f\r\n",
+    //          (unsigned long)nchg, mean,
+    //          sqrtf(var > 0.0f ? var : 0.0f), (unsigned long)nw, o_pose.yaw);
+    //   nchg = 0u; nw = 0u; sum_w = 0.0f; sum_w2 = 0.0f;
+    //   t_last = HAL_GetTick();
+    // }
+  // }
     osDelay(3);
   }
   /* USER CODE END ops9imu_fuction */
@@ -363,11 +361,12 @@ void gripper_task(void *argument)
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
     // BlockBasic_TurntableTo(SERVO_ID_SCS0009_MAX-id);
-    // osDelay(100);
+    osDelay(5);
   }
   // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
 
   BlockBasic_LiftToAbs(4.0f);     /* 夹爪初始化抬到 4mm */
+  // BlockBasic_LiftToAbs(23.0f);
   printf("[scs] gripper init done\r\n");
   for (;;)
   {
@@ -492,26 +491,6 @@ uint8_t key_StartOK=0;
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-
-/**
-  * @brief  按系列分派的位置控制 —— 上层不必记住哪个 ID 是哪个系列。
-  * @param  id   舵机 ID：1 = STS3032(SMS_STS 系列)，2~6 = SCS0009(SCSCL 系列)
-  * @param  pos  目标位置。**量程由系列决定，两者不能混用**：
-  *              STS3032 是 0~4095（中位 2048），SCS0009 是 0~1000（中位 500）。
-  * @note   速度/加速度取 PD 区里各自系列的常量，本函数不暴露这几个参数；
-  *         需要单独调速时直接调 SCS_WritePosEx() / SCS_WritePos()。
-  * @note   两个系列不能互换 API：把 SCS0009 交给 SCS_WritePosEx() 会把 ACC
-  *         字节写到 SCSCL 未定义的 41 号地址，且位置超出 0~1000 量程 ——
-  *         不报错，只是不动。原因见本文件 PD 区的说明。
-  */
-static void servo_set_pos(uint8_t id, uint16_t pos)
-{
-  if (id == SERVO_ID_STS3032) {
-    (void)SCS_WritePosEx(id, (int16_t)pos, STS_SPEED, STS_ACC);
-  } else {
-    (void)SCS_WritePos(id, pos, SCS_TIME, SCS_SPEED);
-  }
-}
 
 /**
   * @brief  栈溢出钩子 (configCHECK_FOR_STACK_OVERFLOW = 2 时由内核调用)。

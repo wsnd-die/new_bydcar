@@ -91,6 +91,8 @@ void BlockCollect_Start(void);
 /** 清掉三个状态标志 (不清 g_tt 的采集字段 —— 每轮开头自己会 TT_Init)。 */
 void BlockCollect_Reset(void);
 
+void servo_set_pos(uint8_t id, uint16_t pos);
+
 bool BlockCollect_IsRunning(void);
 bool BlockCollect_IsDone(void);
 
