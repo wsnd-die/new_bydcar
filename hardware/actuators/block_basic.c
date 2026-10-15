@@ -410,13 +410,15 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
     if (dir == 'O')
     {
         float fwd  = 0.071f + y * PLACE_CIRCLE_SCALE_M;
-        float left = 0.007f + x * PLACE_CIRCLE_SCALE_M;
+        float left = 0.004f + x * PLACE_CIRCLE_SCALE_M;
 
         if (height <=0)
         {
             if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
             }
             BlockBasic_GripperRelease(slot);
+            // osDelay(10);
+            // BlockBasic_GripperRelease(slot);
             BlockBasic_LiftTo(DOWN, abs(height));
             osDelay(150);
             /* 后退 */
@@ -427,7 +429,7 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
         {
             if (slot == 1)
         {
-                if (!Mecanum_MoveBodyPos(fwd+0.001, left, PLACE_MOVE_TIMEOUT_MS)) {
+                if (!Mecanum_MoveBodyPos(fwd+0.001, left+0.002, PLACE_MOVE_TIMEOUT_MS)) {
                 }
                 BlockBasic_GripperRelease(slot);
             if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
