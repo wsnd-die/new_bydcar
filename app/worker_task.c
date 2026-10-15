@@ -401,7 +401,7 @@ static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
  * 所以在流程派发下一个阶段**之前**, 原地向前低速蹭一小段, 一直蹭到物块
  * "完全进入"进料口为止。距离和时长两道限幅, 蹭不进去也不会一直顶着。
  * ================================================================== */
-#define NF_CREEP_FWD_M       0.19f    /* 前进距离上限 (m) —— 第一道限幅 */
+#define NF_CREEP_FWD_M       0.3f    /* 前进距离上限 (m) —— 第一道限幅 */
 #define NF_CREEP_VMPS        0.5f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
 #define NF_CREEP_TIMEOUT_MS  2300u    /* 总时长上限 (ms) —— 第二道限幅 */
 #define NF_CREEP_TICK_MS     10u      /* 蹭的控制周期 (ms) */
@@ -444,7 +444,7 @@ static void NF_CreepForward(void)
         ir_last   = now;
 
         if (fell) {
-            osDelay(20);                     /* 复确认一拍, 防毛刺 */
+            osDelay(40);                     /* 复确认一拍, 防毛刺 */
             if (!IR_ObjectPresent()) {
                 break;                       /* 确实恢复了 → 物块进去了 */
             }
@@ -563,7 +563,7 @@ static void NF_Stage_FindCircle(void)
 
     if (TT_RotateByQR()) {
         printf("[FLOW] FindCircle %f,%f 转盘物理槽 %u\r\n",g_circle_avg_x,g_circle_avg_y, (unsigned)TT_CurrentSlot());
-        Place('O', g_circle_avg_x, g_circle_avg_y, 48u, TT_CurrentSlot());
+        Place('O', g_circle_avg_x, g_circle_avg_y, 50u, TT_CurrentSlot());
     } else {
         printf("[FLOW] FindCircle: 该物块在 g_tt 里找不到或已放完, 跳过\r\n");
     }
@@ -587,9 +587,6 @@ static void NF_Stage_PlaceDown(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-    /* 原来这里有一句 `g_circle_speed = 1.0f;` —— 是**死代码**:
-     * Circle_Follow() 每拍都会按圆心偏差重算这个系数, 外部赋值立刻被覆盖。
-     * 而且它一旦生效就是灾难(系数 1.0 × 20px 偏差 = 20 m/s)。已删。 */
 
     if (!s_place_latch) {
         if (slot_idx == SLOT_NONE) {
@@ -606,7 +603,7 @@ static void NF_Stage_PlaceDown(void)
             // osDelay(170);
         }
         BlockBasic_TurntableTo(tslot);
-        BlockBasic_TurntableTo(tslot);
+        printf("[FLOW] PlaceDown rank=%d -> turntable slot=%u\r\n", (int)rank, (unsigned)tslot);
         s_place_latch = true;
     }
 
@@ -626,7 +623,7 @@ static void NF_Stage_PlaceDown(void)
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
-        BlockBasic_LiftToAbs(48.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
+        BlockBasic_LiftToAbs(51.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
         // osDelay(250);
     }
 
@@ -717,7 +714,7 @@ void NLF_RunFlow(SystemMode_t mode)
 
         case Event_NavCircleL:
             /* 跑一段定半径圆弧  */
-            Nav_Cricle(Nav_CricleL ,  0.91f, 170*NAV_DEG2RAD );
+            Nav_Cricle(Nav_CricleL ,  0.92f, 170*NAV_DEG2RAD );
             break;
         case Event_NavCircleR:
             Nav_Cricle(Nav_CricleR , 0.93f ,170*NAV_DEG2RAD );
