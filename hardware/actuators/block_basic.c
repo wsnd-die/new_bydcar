@@ -444,7 +444,7 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
                 osDelay(300);
                 BlockBasic_GripperRelease(TT_CurrentSlot());
                 osDelay(10);
-                BlockBasic_GripperRelease(TT_CurrentSlot());
+                // BlockBasic_GripperRelease(TT_CurrentSlot());
                 /* 后退 0.05 m (车体 -X 方向) */
                 if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
                 }

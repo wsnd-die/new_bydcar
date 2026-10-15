@@ -470,10 +470,15 @@ static void NF_Stage_Navigation(void)
     uint8_t need = (cur_stage == COLLECT_TROPHY) ? 4u : 1u;
     if (NAV_count == need)
     {
+
         printf("[FLOW] %s collected\r\n",(cur_stage == COLLECT_TROPHY) ? "trophy" : "block");
     }
     if (NAV_count < need)
     {
+        if (NAV_count==3)
+        {
+            BlockBasic_LiftToAbs(31.0f);
+        }
         NLF_Request(Event_Navigation);
         return;
     }
@@ -606,7 +611,7 @@ static void NF_Stage_PlaceDown(void)
             // osDelay(170);
         }
         BlockBasic_TurntableTo(tslot);
-        BlockBasic_TurntableTo(tslot);
+        // BlockBasic_TurntableTo(tslot);
         s_place_latch = true;
     }
 
@@ -626,7 +631,7 @@ static void NF_Stage_PlaceDown(void)
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
-        BlockBasic_LiftToAbs(48.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
+        BlockBasic_LiftToAbs(51.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
         // osDelay(250);
     }
 
