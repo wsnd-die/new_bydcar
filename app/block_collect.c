@@ -444,6 +444,9 @@ static void collect_slots(void)
 
         /* 三个槽都过完了, 现在才谈得上"缺哪一个" */
         trophy_fill_missing();
+        NX_RequestMode(NX_MODE_CIRCLE);
+        NX_ApplyMode();
+        BlockBasic_LiftToAbs(32.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
 
         BlockBasic_LiftToAbs(31.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
     }

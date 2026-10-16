@@ -401,7 +401,7 @@ static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
  * 所以在流程派发下一个阶段**之前**, 原地向前低速蹭一小段, 一直蹭到物块
  * "完全进入"进料口为止。距离和时长两道限幅, 蹭不进去也不会一直顶着。
  * ================================================================== */
-#define NF_CREEP_FWD_M       0.19f    /* 前进距离上限 (m) —— 第一道限幅 */
+#define NF_CREEP_FWD_M       0.3f    /* 前进距离上限 (m) —— 第一道限幅 */
 #define NF_CREEP_VMPS        0.5f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
 #define NF_CREEP_TIMEOUT_MS  2300u    /* 总时长上限 (ms) —— 第二道限幅 */
 #define NF_CREEP_TICK_MS     10u      /* 蹭的控制周期 (ms) */

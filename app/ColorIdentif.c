@@ -252,6 +252,7 @@ bool TT_RotateByQR(void)
 
     if (slot!=0) {
             BlockBasic_TurntableTo(slot);
+            BlockBasic_TurntableTo(slot);
             g_tt_last_slot = slot;   /* 记为"当前在门口"的物理槽号 (1~5) */
             // osDelay(500);
             return true;
