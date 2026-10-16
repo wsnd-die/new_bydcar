@@ -21,6 +21,7 @@
  * ================================================================== */
  uint8_t s_idx=0;
 World_Dir_t Self_Dir = {0.0f, 0.0f, 0.0f};
+float Frist_EX,Frist_EY;
 
 World_Dir_t g_waypoints[NAV_WAYPOINT_MAX] = {
     {   0.502536f,-1.081990f,-1.089054f }, /*  1 奖杯点 */
@@ -217,6 +218,7 @@ static void NAV_Stop(void)
  * 世界系位置闭环
  * ================================================================== */
 
+
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 {
     s_nav_aborted = false;
@@ -252,11 +254,20 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
     PoseData_t pose;
     uint8_t    heading_armed = 0u;
 
+    uint8_t Frist_flag=0;
+
+    /* 从这一拍起本段才算"在跑"。此前(含上面那 20ms 让路)到达的打断与本节无关,
+     * 由 Route_AbortRequest() 直接丢弃 —— 见该函数的说明。 */
     g_nav_running = 1u;
 
     for (;;)
     {
         locator_ops9.get_pose(&pose);   /* 只读, 不调 update (ops9imu 任务在喂) */
+        if (!Frist_flag) {
+            Frist_EX =target_x- pose.x;
+            Frist_EY =target_y- pose.y;
+            Frist_flag=1;
+        }
 
         /* 控制周期实测: 采样点固定在本行, 相邻两拍之差 = 一拍真实耗时
          * (osDelay(NAV_LOOP_TICKS) + 下发 + 计算)。第一拍没有前一拍, 跳过。 */
@@ -506,14 +517,11 @@ bool Nav_FeDuanPoint(void)
 }
 
 bool Nav_MoveBody(float target_x, float target_y, float target_yaw) {
-
-    float targetworld_x=target_x+Self_Dir.x,
-    targetworld_y=target_y+Self_Dir.y,
-    targetworld_yaw=target_yaw+Self_Dir.yaw;
-
-    return Nav_GoToWorld(targetworld_x ,targetworld_y  , targetworld_yaw );
-
-
+    float c = cosf(Self_Dir.yaw), s = sinf(Self_Dir.yaw);
+    float targetworld_x   =  target_x * c - target_y * s + Self_Dir.x;
+    float targetworld_y   =  target_x * s + target_y * c + Self_Dir.y;
+    float targetworld_yaw =  target_yaw + Self_Dir.yaw;   /* 这行是对的：yaw 是纯加法 */
+    return Nav_GoToWorld(targetworld_x, targetworld_y, targetworld_yaw);
 }
 
 
@@ -651,5 +659,152 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
 }
 
 
+/* ==================================================================
+ * 短距高精度定点 (OPS9 闭环) —— V1.34.0
+ *
+ * 精简版 Nav_GoToWorld(): 只保留「取位姿 → 三轴误差 → 控制解算 →
+ * 世界→车体 → Mecanum_Calc_Full_V → Send_commandmotor」这条主干,
+ * 没有调参仪表 / 日志 / 路线逻辑。
+ *
+ * 入参是【车体量】: x = 朝车头方向走多少, y = 朝车左方走多少,
+ * yaw = 航向增量 (rad)。入口以当时 OPS9 位姿为基准折算成**固定的**
+ * 世界系目标点 (与 Place() 的 fwd/left 折算同思路), 之后闭环目标不动。
+ *
+ * 高精度来源:
+ *   - 平移 PD: P 对位置误差, D 对每拍误差变化量 (逼近时减速 = 阻尼);
+ *   - SHORT_VMAX 低速限幅 (慢 = 稳) + NAV_Ramp 软启动;
+ *   - 到位容差收紧: SHORT_TOL_XY = 1cm (导航默认 4cm)、SHORT_TOL_YAW ≈ 2.9°;
+ *   - 连续 SHORT_ARRIVE_TICKS 拍误差入容差才判到达 (抗 OPS9 单帧抖动);
+ *   - 航向走工程统一开关 NAV_YAW_CASCADE (串级环 / 手写 PD)。
+ *
+ * 阻塞在本函数内; 到达 / 超时 / 被打断三个出口都零速停车并刷新 Self_Dir,
+ * 被打断置 s_nav_aborted (调用方可用 Nav_LastAborted() 查)。
+ * ================================================================== */
 
+#define SHORT_VMAX         0.3f    /* 短距平移速度上限 m/s */
+#define SHORT_VX           1.9f
+#define SHORT_VY           2.3f
+#define SHORT_KD_X         1.0f    /* 平移 D: 每拍误差变化量增益 (★初值, 待实测) */
+#define SHORT_KD_Y         1.0f    /* 平移 D: 每拍误差变化量增益 */
+#define SHORT_TOL_XY       0.005f   /* 到达容差 1cm */
+#define SHORT_TOL_YAW      0.05f   /* 到达容差 ~2.9° */
+#define SHORT_ARRIVE_V     0.1f    /* 到达时指令速度须已衰减到 m/s */
+#define SHORT_ARRIVE_TICKS 4u      /* 连续 N 拍判到达 */
+#define SHORT_TIMEOUT_MS   3000u   /* 短距超时 ms */
 
+void NAV_SHORT_WORD(float x, float y, float yaw)
+{
+
+    osDelay(10);
+
+    /* 车体量 → 固定世界目标: 以入口时的 OPS9 位姿为基准 */
+    PoseData_t pose;
+    locator_ops9.get_pose(&pose);
+    if (!pose.valid)
+    {
+        printf("[SHORT] 起点 OPS9 无效, 不动作\r\n");
+        return;
+    }
+    float c0 = cosf(pose.yaw), s0 = sinf(pose.yaw);
+    float tx   = pose.x + (x * c0 - y * s0);
+    float ty   = pose.y + (x * s0 + y * c0);
+    float tyaw = NAV_WrapPi(pose.yaw + yaw);
+
+    float vx_cmd = 0.0f, vy_cmd = 0.0f;
+    float last_ex = 0.0f, last_ey = 0.0f;
+    uint8_t  exy_armed = 0u;        /* 第一拍没有"上一拍误差", D 项先不参与 */
+    uint8_t  arrive   = 0u;
+    uint8_t  invalid  = 0u;
+    uint8_t  heading_armed = 0u;
+    uint32_t t0 = osKernelGetTickCount();
+    s_nav_aborted = false;
+    g_nav_running = 1u;
+
+    for (;;)
+    {
+        locator_ops9.get_pose(&pose);   /* 只读, ops9imu 任务在喂 */
+
+        /* 出口一: IR 进料打断 (语义与 Nav_GoToWorld 相同) */
+        if (g_route_abort)
+        {
+            g_route_abort = 0u;
+            s_nav_aborted = true;
+            break;
+        }
+
+        if (!pose.valid)
+        {
+            if (++invalid > NAV_MAX_INVALID_TICKS)
+            {
+                vx_cmd = 0.0f; vy_cmd = 0.0f;
+                NAV_Stop();
+            }
+            osDelay(NAV_LOOP_TICKS);
+            continue;
+        }
+        invalid = 0u;
+
+        float ex   = tx - pose.x;
+        float ey   = ty - pose.y;
+        float eyaw = NAV_WrapPi(tyaw - pose.yaw);
+
+        /* 航向: 与 Nav_GoToWorld 同一套开关 */
+// #if NAV_YAW_CASCADE
+//         if (!heading_armed) {
+//             Angle_Enable(tyaw);         /* 起点由 angle_ctrl 自己读 OPS9, 无跳变 */
+//             heading_armed = 1u;
+//         }
+//         Angle_Step();
+//         float w_w = Angle_GetW();
+// #else
+        float eyaw_dz = (fabsf(eyaw) < NAV_YAW_DEADBAND) ? 0.0f : eyaw;
+        float wz      = (fabsf(pose.wz) < NAV_W_DEADBAND) ? 0.0f : pose.wz;
+        float w_w = NAV_KP_YAW * eyaw_dz - NAV_KD_YAW * wz;
+        w_w = NAV_Clamp(w_w, -NAV_VMAX_W, NAV_VMAX_W);
+// #endif
+
+        /* 平移 PD: P 对位置误差, D 对每拍误差变化量。
+         * dex = ex - last_ex ≈ -v·dt → 逼近目标时 dex<0, D 项减指令 = 阻尼。
+         * (与 Nav_GoToWorld 把 ex_x 传进 NAV_AxisRef 同量纲, 但 D 的符号
+         *  语义是"逼近减速", 不是它那种近似可忽略的小正反馈。) */
+        float dex = exy_armed ? (ex - last_ex) : 0.0f;
+        float dey = exy_armed ? (ey - last_ey) : 0.0f;
+        last_ex = ex; last_ey = ey;
+        exy_armed = 1u;
+
+        float vx_ref = NAV_Clamp(SHORT_VX * ex + SHORT_KD_X * dex, -SHORT_VMAX, SHORT_VMAX);
+        float vy_ref = NAV_Clamp(SHORT_VY * ey + SHORT_KD_Y * dey, -SHORT_VMAX, SHORT_VMAX);
+        vx_cmd = NAV_Ramp(vx_cmd, vx_ref, NAV_ACC_XY, NAV_DT);
+        vy_cmd = NAV_Ramp(vy_cmd, vy_ref, NAV_ACC_XY, NAV_DT);
+
+        /* 世界 → 车体 → 四轮 */
+        float c = cosf(pose.yaw), s = sinf(pose.yaw);
+        float bvx =  vx_cmd * c + vy_cmd * s;
+        float bvy = -vx_cmd * s + vy_cmd * c;
+        MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
+        Send_commandmotor(&res);
+
+        if (fabsf(ex) <= SHORT_TOL_XY && fabsf(ey) <= SHORT_TOL_XY &&
+            fabsf(eyaw) <= SHORT_TOL_YAW &&
+            fabsf(vx_cmd) <= SHORT_ARRIVE_V && fabsf(vy_cmd) <= SHORT_ARRIVE_V)
+        {
+            if (++arrive >= SHORT_ARRIVE_TICKS) break;   /* 出口二: 到达 */
+        }
+        else
+        {
+            arrive = 0u;
+        }
+
+        if ((osKernelGetTickCount() - t0) >= SHORT_TIMEOUT_MS) break;   /* 出口三: 超时 */
+
+        osDelay(NAV_LOOP_TICKS);
+    }
+
+    /* 三个出口共用收尾: 零速停车 + 刷新 Self_Dir + 关航向环 */
+    NAV_Stop();
+    if (pose.valid) {
+        Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
+    }
+    Angle_Disable();
+    g_nav_running = 0u;
+}
