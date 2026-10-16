@@ -626,7 +626,7 @@ static void NF_Stage_PlaceDown(void)
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
-        BlockBasic_LiftToAbs(48.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
+        BlockBasic_LiftToAbs(51.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
         // osDelay(250);
     }
 
