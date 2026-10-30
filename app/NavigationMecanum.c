@@ -220,7 +220,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
                 Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
             }
             s_nav_aborted = true;
-            Angle_Disable();      /* 关串级航向环 */
+            Angle_Disable();      /* 关串级航向环 (出口一: 被打断) */
             g_nav_running = 0u;
             g_nav_leg_speed = 1.0f;   /* 本段倍率用完即还原 */
             return false;
@@ -241,8 +241,11 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             invalid = 0;
 
 #if NAV_YAW_CASCADE
+            /* 等**首个有效位姿**再武装。Angle_Enable() 内部把轨迹状态初始化到
+             * 当前位姿, 且目标写成 `yaw_now + wrap(target − yaw_now)`(走近路) ——
+             * 所以起步无跳变, 且与 OPS9 的 yaw 零点是否标定无关。 */
             if (!heading_armed) {
-                Angle_Enable(target_yaw);
+                Angle_Enable(target_yaw);   /* 起点由 angle_ctrl 自己读 OPS9 当前位姿 */
                 heading_armed = 1u;
             }
 #endif
@@ -251,7 +254,9 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             float ey   = target_y - pose.y;
             float eyaw = NAV_WrapPi(target_yaw - pose.yaw);
 
-            /* 调参仪表: 累计过冲量 (ovs 含 yaw) */
+            /* 调参仪表: 累计过冲量 + 末态 (见函数开头的说明)
+             * ★ ovs_yaw 本次新增 —— 原仪表**只统计 x/y 的过冲, yaw 没有**,
+             *   而这次换的正是航向控制器, 没有它就无从 A/B 对比。 */
             if (!s0_set) {
                 s0x   = (ex   >= 0.0f) ? 1.0f : -1.0f;
                 s0y   = (ey   >= 0.0f) ? 1.0f : -1.0f;
@@ -280,7 +285,8 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
 
 #if NAV_XY_PROFILE
 
-            /* VMAX / BRK 乘本段倍率; KP / KD 不乘 (那是控制律形状, 不是快慢)。 */
+            /* VMAX / BRK 乘本段倍率 (g_nav_leg_speed); 爬行上限在 NAV_AxisRef 里乘。
+             * ★ KP / KD 不乘 —— 那是"控制律形状", 不是"快慢"。 */
             float vx_ref = NAV_AxisRef(ex, NAV_VMAX_X * g_nav_leg_speed,
                                        NAV_BRK_X * g_nav_leg_speed, NAV_KP_X_LIN,
                                        NAV_KD_X_LIN, ex_x, 'x');
@@ -299,7 +305,7 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
             float c = cosf(pose.yaw), s = sinf(pose.yaw);
             float bvx =  vx_cmd * c + vy_cmd * s;
             float bvy = -vx_cmd * s + vy_cmd * c;
-            (void)bvx; (void)bvy;
+            (void)bvx; (void)bvy;      /* 临时: 平移未接入, 消 unused 告警 */
 
             MecanumResult res = Mecanum_Calc_Full_V(bvx, bvy, w_w);
             Send_commandmotor(&res);
@@ -323,6 +329,8 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
                 arrive = 0;
             }
         }
+
+        /* 超时: 零速停车, 仅反馈有效时刷新 Self_Dir */
         if ((osKernelGetTickCount() - t0) >= NAV_TIMEOUT_MS)
         {
             NAV_Stop();
@@ -344,9 +352,10 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw)
         osDelay(NAV_LOOP_TICKS);   /* 10ms → 100Hz */
     }
 
+    /* 到达: 零速停车 + 刷新 Self_Dir */
     NAV_Stop();
     Self_Dir.x = pose.x; Self_Dir.y = pose.y; Self_Dir.yaw = pose.yaw;
-    Angle_Disable();          /* 关串级航向环  */
+    Angle_Disable();          /* 关串级航向环 (出口三: 到达) */
     g_nav_running = 0u;
     g_nav_leg_speed = 1.0f;   /* 本段倍率用完即还原 */
     return true;
@@ -362,7 +371,27 @@ bool Nav_RunWaypoints(void)
     return true;
 }
 
-
+/**
+ * @brief  分点导航 —— 按 g_waypoints[] 逐点推进（一次一步）
+ *
+ * 每次调用只驱动到**一个**路径点, 游标记在函数内的 static 里。
+ * "一次一步"是刻意的: worker_task.c 的 NF_Stage_Navigation() 每被流程调到
+ * 一次就推进一站, 站点之间流程还能经 NF_DispatchNext() 分发到循迹等其它阶段。
+ * 若改成一次走完整张表, 这些站点之间的分发机会就没了。
+ *
+ * @note 到达判据 / 超时 / 反馈失效处理都在 Nav_GoToWorld() 里, 本函数只做推进。
+ * @note 与旧副本 (4eedf6a, 2026-09-14) 的差异: 旧版把第 13 点之后的两点塞在
+ *       同一次调用里 (PontIntex == 13 的特判), 这里不再特判 —— 表中 13/14 号
+ *       就是普通点, 按顺序一次一个。
+ *
+ * @warning 游标只在**成功**时推进, 超时的点下次会重试。而调用方
+ *          NF_Stage_Navigation() 目前**忽略本函数的返回值** —— 若某个点因
+ *          OPS9 离线等原因持续失败, 流程会永远卡在 Navigation 阶段。
+ *          真出现这种情况, 需要给这里加失败上限计数, 或让调用方检查返回值。
+ *
+ * @return true   本点已到达 (或整条路线已走完)
+ * @return false  本点超时未到达 (游标不推进, 下次重试)
+ */
 bool Nav_FeDuanPoint(void)
 {
 
@@ -375,7 +404,7 @@ bool Nav_FeDuanPoint(void)
 
     if (s_idx >= count) {
         s_last_wp = 0u;                 /* 路线已走完: 清掉"刚走过的点号" */
-        return true;
+        return true;                    /* 恒真 */
     }
 
     s_last_wp = (uint8_t)(s_idx + 1u);  /* 本段走的点号 (1 基), 给蹭料判断用 */
@@ -387,8 +416,8 @@ bool Nav_FeDuanPoint(void)
     }
     if (s_idx == (uint8_t)NAV_SLOW_WP_IDX2)
     {
-        s_near_lim_x = 0.45f;
-        s_near_lim_y = 0.45f;
+        s_near_lim_x = 0.35f;
+        s_near_lim_y = 0.35f;
     }
     else {
         s_near_lim_x = NAV_CREEP_X_V;
@@ -432,10 +461,14 @@ bool Nav_MoveBody(float target_x, float target_y, float target_yaw) {
 
 
 /* ==================================================================
- * 定半径圆弧 (OPS9 位置闭环)
+ * 定半径圆弧 (OPS9 位置闭环) —— V1.26.0
  *
- * 圆心由起点位姿推得; 每拍: 切向匀速 (软启动) + 径向 P 拉回 + 航向
- * 前馈 v/R 与切线误差 P。扫够 |Angle| 退出, 超时 / 打断在此收尾。
+ * 走法: 圆心由起点位姿推得 (左弧圆心在车左侧, 右弧在右侧), 每拍用 OPS9
+ * 算「已扫过的圆心角 + 径向误差」:
+ *   - 切向: 匀速 v (软启动), 方向由 dir 定;
+ *   - 径向: -Kp·e_r 把车拉回半径 R 的圆上;
+ *   - 航向: 前馈 v/R + 切线误差 P + wz D, 让车头保持圆弧切线。
+ * 阻塞在本函数内, 扫够 |Angle| 才退出; 超时 / 打断也在此收尾。
  * ================================================================== */
 
 void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
@@ -449,12 +482,12 @@ void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle)
         printf("[NAV-ARC] 参数非法 R=%.3f A=%.3f, 不动作\r\n", R, sweep);
         return;
     }
-    BlockBasic_LiftToAbs(2);
-    /* 借走电机控制权 (退出不恢复角度环) */
+    BlockBasic_LiftToAbs(0);
+    /* 1. 借走电机控制权 (与 Nav_GoToWorld 同契约, 退出不恢复角度环) */
     g_angle_ctrl_enable = 0;
     osDelay(10);
 
-    /* 起点位姿 → 圆心 (左弧在车左侧 R 处, 右弧在右侧) */
+    /* 2. 起点位姿 → 圆心。左弧圆心 = 车左侧 R 处; 右弧 = 右侧 R 处。 */
     PoseData_t pose;
     locator_ops9.get_pose(&pose);
     for (uint32_t wait = 0u; !pose.valid && wait < 500u; wait += 20u) {
