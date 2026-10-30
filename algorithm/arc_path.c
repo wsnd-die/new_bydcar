@@ -41,14 +41,10 @@ bool Arc_Run(void)
     const float v      = s_v_mps;
     const float sweep  = fabsf(s_sweep_deg);
 
-    /* 防御性禁用串级航向环 —— 本模块是纯几何开环航向(v/R 前馈, 不读 IMU),
-     * 与串级环语义不同, 不能被它同时驱动同一组电机。 */
     Angle_Disable();
 
     float    w_rad, w_deg, sweep_time_s;
     uint32_t t0, timeout_ms;
-
-    /* 参数校验：宁可不动，不可乱动 */
     if (radius == 0.0f || v == 0.0f || sweep == 0.0f) {
         return false;
     }
@@ -73,9 +69,7 @@ bool Arc_Run(void)
     {
         Send_commandmotor(&cmd);    /* 每拍重发，防单帧丢失 */
 
-        /* V1.23.0 打断：外部（IR 进料）要求立刻收尾，切下一段路线。
-         * 消费掉请求后走**正常收尾**路径（仍然 return true）—— 不要借下面
-         * 那个 false，它的语义是「参数非法」，会打出误导日志。 */
+        /* IR 进料打断: 立刻收尾 */
         if (g_route_abort) {
             g_route_abort = 0u;
             break;

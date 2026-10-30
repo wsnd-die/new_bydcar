@@ -1,62 +1,34 @@
 /**
  * @file    block_collect.c
- * @brief   物块收集逻辑。槽位编号约定与设计说明见 block_collect.h。
- *
- *  **不自己起任务**: 由 gripper_task 的 for(;;) 每圈调一次 BlockCollect_Poll()。
- *  舵机总线也归 gripper_task 管 (SCS_BusInit 在它入口), 所以这里不必再等总线就绪。
+ * @brief   物块 / 奖杯采集。
  */
 #include "Common_used.h"
 #include "block_collect.h"
 #include "collect_ir.h"       /* IR_ObjectEntered */
-#include "msp_color.h"        /* MSP_Color_Wait */
+#include "msp_color.h"        /* MSP_Color_Vote */
 #include "block_basic.h"      /* 转盘 / 夹爪 / 形状 */
 #include "ColorIdentif.h"     /* g_tt */
 #include "NX_uart.h"          /* NX_GetTrophyRank */
-#include "worker_task.h"      /* Route_AbortRequest —— IR 进料推进导航 (V1.23.0) */
-#include "ops9_g491_uart3.h"  /* locator_ops9 —— 物料分支改按车体 X 触发 (V1.33.4) */
+#include "worker_task.h"      /* Route_AbortRequest */
+#include "ops9_g491_uart3.h"  /* locator_ops9 */
 #include "pose_data.h"        /* PoseData_t */
 #include "servo_scs.h"
 
-/* ================================================================
- * 时序常量 —— ★ 全部是占位值, 上机实测后调
- * ================================================================ */
 
-/** 转盘/夹爪动作走完之后等机构停稳, 再去读。读早了两样都会读到中途值。 */
-#define COLLECT_SETTLE_MS        100u
-/** **X 模式**下 `wait_block_entered()` 的**最终硬上限** —— 只用来防死等。
- *
- *  物料分支由两个条件之一退出: ① 对射管识别到物块 (**主判据**); ② 车体 X 到达
- *  该槽的触发点 `COLLECT_TRIGGER_X[]` (V1.33.4 起取代原来那个"等满固定时间就
- *  放弃")。这道时间上限只在 **OPS9 离线、`pose.x` 冻结** 时才用得上 —— 那时 X
- *  永远等不到, 不设上限 `gripper_task` 会永久卡死。
- *  @note 奖杯分支**不用这个**, 它走 `COLLECT_IR_TIMEOUT_MS`。 */
-#define COLLECT_IR_HARD_TIMEOUT_MS   5000u
 
-/** **奖杯分支**专用: 等满这么久还没等到 IR 就放弃 (`COLLECT_X_OFF` 那条路)。
- *  @note 这同时是**名次投票窗口**的长度 —— **必须固定**, 票数不能被车速左右。 */
-#define COLLECT_IR_TIMEOUT_MS    5000u
+#define COLLECT_SETTLE_MS           100u     /* 等机构停稳再读 */
+#define COLLECT_IR_HARD_TIMEOUT_MS  5000u    /* X 模式硬超时, 防 OPS9 离线时死等 */
+#define COLLECT_IR_TIMEOUT_MS       5000u    /* 奖杯分支: 同时是名次投票窗口, 必须固定 */
+/* 传给 wait_block_entered 表示"不按 X 退出"; X 可能为 0, 不能用 0 当哨兵 */
+#define COLLECT_X_OFF               (-1.0e30f)
 
-/** 传给 `wait_block_entered()` 表示 "**不按 X 退出**, 按 `timeout_ms` 等满"。
- *  用一个大负数而不是 0 —— X 坐标本身可以是 0, 不能拿 0 当哨兵。 */
-#define COLLECT_X_OFF            (-1.0e30f)
-
-/** 车体 X 坐标触发点 (世界系, m) —— **现在只有"等圆锥"那一次在用**。
- *
- *  ⚠ 槽 2~5 与奖杯分支都已改回**只认对射管 + 等满超时** (传 `COLLECT_X_OFF`)。
- *    原因是这段采集在**弧上**: `pose.x` 不是单调的, 越靠后的槽触发点越低
- *    (越靠近弧的 X 谷底), 越容易被 X 来回穿过而**假触发** —— 物块还没进来,
- *    夹爪就关了。圆锥在最前面, 车刚起步、X 还在稳定下降, 所以它还能用。
- *    其余几项先留着, 真要按槽启用再说 (要用就得先把 5 个值现场示教准)。
- *
- *  下标 = **转盘槽号 (1~5)**, 与 `block_collect.h` 的 `CONE_SLOT` /
- *  `BLOCK_FIRST_SLOT` / `BLOCK_LAST_SLOT` 一致; `[0]` 未用。
- *
- *  ★ 判据是**边沿 + 一次性武装**, 详见 `wait_block_entered()` 里的 ★。
- *  ★ 这条路线 X **递减**, 所以"跨进来" = 从 `> 值` 变到 `<= 值`;
- *    重新示教时表里的值也应当是递减的。 */
+/** 车体 X 触发点 (世界系, m), 下标 = 转盘槽号, [0] 未用。
+ *  只有"等圆锥"在用; 槽 2~5 和奖杯走 IR + 超时 —— 弧段 pose.x 非单调,
+ *  X 判据会被来回穿过而假触发。
+ *  此路线 X 递减, "跨进来" = 从 > 值变为 <= 值。 */
 static const float COLLECT_TRIGGER_X[] = {
     0.0f,
-    1.731493f,
+    1.751493f,
     1.604586f,
     1.228177f,
     0.795644f,
@@ -68,24 +40,16 @@ static const float COLLECT_TRIGGER_X[] = {
 // {   0.865644f, 1.449459f,-2.979479f }, /* 10 b 点 */
 // {   0.450772f, 1.269985f,-2.411954f }, /* 11 a 点 */
 
-static volatile bool s_req     = false;   /* 有采集请求待处理 */
+static volatile bool s_req     = false;   /* 有待处理的采集请求 */
 static volatile bool s_running = false;
 extern volatile bool s_done    = false;
 
-/** 本次采集跑哪条分支。由 BlockCollect_SetStage() 设定, 不自动翻转。 */
-static volatile BlockCollectStage_t s_stage = COLLECT_BLOCK;
+static volatile BlockCollectStage_t s_stage = COLLECT_BLOCK;   /* 由 SetStage() 指定 */
 /* ================================================================
  * 内部
  * ================================================================ */
 
-/**
- * @brief NX 回传的奖杯名次字符 → 内部编码。
- * @param ch  NX 回的字符: **'a' = 冠军,  'b' = 亚军,  'c' = 季军**
- *            (大小写都收)。其余字符一律当脏数据。
- * @return 1=冠军 2=亚军 3=季军 (与 Jang_type 同编码); 不是这几个字符时返回 0。
- *
- * @note   NX 实际发的是字母不是数字 —— 见 V1.21.3 记录。要改对应关系只动这里。
- */
+/** NX 名次字符转内部编码: 'a'/'b'/'c' → 1/2/3 (大小写都收), 其他返回 0。 */
 static uint8_t trophy_char_to_rank(char ch)
 {
     switch (ch) {
@@ -97,42 +61,16 @@ static uint8_t trophy_char_to_rank(char ch)
 }
 
 /**
- * @brief 等一个物块完全进来; 顺带在等待期间给 NX 报的奖杯名次投票。
+ * @brief 等物块完全进来, 同时给 NX 报的奖杯名次投票。
  *
- * **两个触发条件, 命中任意一个都算"这一槽可以夹了" (返回 true, 走正常流程)**:
- *   ① **对射管 (IR)** 识别到物块 (`IR_ObjectEntered()`) —— 主判据, 逻辑一点没动。
- *   ② **车体 X 刚好跨过**该槽的触发点 (`COLLECT_TRIGGER_X[]`) —— **边沿 + 一次性
- *      武装**: **本次等待开始时**车还在触发点外面才会武装, 之后第一次跨进来才算。
- *      "早就开过去了"不算数, 而且**不会因为 X 升回上方而重新武装**
- *      (弧段上 X 非单调, 重新武装会造出假跨过 —— 详见函数体里的 ★)。
- *      判 `<=` 是因为这条路线上 X **递减**。
+ * 退出条件: IR 触发, 或车体 X 跨过 x_trigger (边沿 + 一次性武装)。
+ * x_trigger == COLLECT_X_OFF 时只认 IR + timeout_ms。
  *
- * `x_trigger == COLLECT_X_OFF` 时**关掉条件 ②**, 只认 IR + 等满 `timeout_ms`。
- * **目前槽 2~5 与奖杯分支都走这条** —— X 判据只留给"等圆锥"那一次: 弧段上
- * `pose.x` 不单调, 靠后的槽拿它当判据会被来回穿而假触发。
+ * @param rank_out  非空时写入票数最多的名次 (0 = 未定); NULL = 不投票。
  *
- * @param x_trigger  该槽的车体 X 触发点 (m), 取自 `COLLECT_TRIGGER_X[]`。
- *                   传 `COLLECT_X_OFF` = 不按 X, 改按时间。
- * @param timeout_ms **只在 `x_trigger == COLLECT_X_OFF` 时有意义**。
- * @param rank_out   非空时: 对这段等待里 NX 报的名次**投票**, 物块进来时把票多的
- *                    那个写入 (1=冠军 2=亚军 3=季军, 与 Jang_type 同编码);
- *                    **一票都没有时写 0**。传 NULL 表示不关心名次 (物料分支用)。
- *                    NX 发的是字母 'a'/'b'/'c', 经 trophy_char_to_rank() 换算。
- * @retval true=可以夹了 (IR 触发 / 车跨过 X); false=等满时间 / 硬超时。
- *
- * @note  **IR_ObjectEntered() 全工程只能有这一个调用者** —— 它内部有个 static
- *        的上一拍状态 (collect_ir.c 的 ir_last), 两个调用者会互相破坏。
- *
- * @note  为什么投票: NX 的名次是视觉给的, 同一个奖杯在视野里会被反复识别, 结果
- *        可能抖动或中途跳变。把「物块完全进来之前这段时间」收到的名次全数一遍
- *        再取多数, 比只认最后一帧稳。**投票窗口就是本函数等待的那一整段** ——
- *        转盘已经转到位、物块还没完全进来的时候。
- *        ⚠ 正因如此, **奖杯分支必须走 `COLLECT_X_OFF` 那条(等满固定时间)** ——
- *        窗口长度一变, 票数就跟着变。
- * @note  开始投票前会**先丢掉一帧残留** —— 上一轮的名次帧若还挂在 trophy_fresh
- *        上, 不清掉会被算进这一轮的票。
- * @note  **NX_GetTrophyRank() 是消费式的**, 全工程只有这里调 (FC_TASK 里原来
- *        那份调试打印已经摘掉, 否则两边抢帧)。
+ * @note IR_ObjectEntered() 全工程只能有一个调用者 (内部有 static 状态)。
+ * @note 奖杯分支必须固定等待时长, 否则投票窗口变化会影响票数。
+ * @note NX_GetTrophyRank() 是消费式, 全工程只在这里调用。
  */
 static bool wait_block_entered(float x_trigger, uint32_t timeout_ms, uint8_t *rank_out)
 {
@@ -180,15 +118,8 @@ static bool wait_block_entered(float x_trigger, uint32_t timeout_ms, uint8_t *ra
             locator_ops9.get_pose(&p);
             if (p.valid) {
                 if (armed == 0u) {
-                    /* ★ **只判定一次, 之后不再改** ——
-                     * 弧段上 `pose.x` 是**非单调**的 (正弦形, 先减后增),
-                     * `COLLECT_TRIGGER_X[]` 里越靠后的槽触发点越低(槽5 的
-                     * 0.350772 最靠近弧的 X 谷底), 于是 X 会在触发点附近**来回穿**。
-                     * 若允许"升回上方就重新武装", 弧一拐弯就会造出**一次假跨过** ⇒
-                     * 物块明明还没进来, 夹爪就关了 (槽 5 提前夹取就是这么来的)。
-                     *
-                     * 所以: 本次等待**开始时**车还在触发点外面 → 武装, 等那一次跨过;
-                     *       一开始就已经在里面 → **永久作废**, 这槽只靠 IR。 */
+                    /* 只判定一次: 弧段 X 非单调, 允许重新武装会假触发;
+                     * 一开始就在内侧则永久作废, 该槽只靠 IR。 */
                     armed = (p.x > x_trigger) ? 1u : 2u;
                 } else if (armed == 1u && p.x <= x_trigger) {
                     printf("[COLLECT] x=%.2f 跨过 (<=%.2f), 正常夹取\r\n",
@@ -197,7 +128,7 @@ static bool wait_block_entered(float x_trigger, uint32_t timeout_ms, uint8_t *ra
                 }
             }
 
-            /* 挂死保护: OPS9 离线时 pose.x 会冻结, 永远等不到位 —— 正常跑不到这里 */
+            /* 硬超时: OPS9 离线时 pose.x 冻结, 永远等不到 */
             if ((HAL_GetTick() - t0) > COLLECT_IR_HARD_TIMEOUT_MS) {
                 printf("[COLLECT] 等 X 超时 %ums, 本槽不再等\r\n",
                        (unsigned)COLLECT_IR_HARD_TIMEOUT_MS);
@@ -213,37 +144,19 @@ static bool wait_block_entered(float x_trigger, uint32_t timeout_ms, uint8_t *ra
     }
 }
 
-/**
- * @brief MSP 没回颜色时的兜底: 前两个槽红、后两个槽蓝。
- */
+/** MSP 没回颜色时的兜底: 槽 2~3 红, 槽 4~5 蓝。 */
 static Color_TypeDef collect_default_color(uint8_t slot)
 {
     return (slot <= 3u) ? COLOR_RED : COLOR_BLUE;
 }
 
-/**
- * @brief 形状读不出来时的兜底 (与 collect_default_color 同款)。
- *
- * 与上面那张颜色表**配对**用, 保证 4 个 `(颜色, 形状)` 恰好铺满 `T1[]`:
- *
- *     槽2 红+方    槽3 红+圆     (collect_default_color: 槽<=3 → 红)
- *     槽4 蓝+方    槽5 蓝+圆     (collect_default_color: 槽>3  → 蓝)
- *
- * @note 哪个槽配方/圆**不影响能不能找到** —— `TT_SeekBlock()` 是按
- *       `(颜色, 形状)` 的值去搜槽的, 只要四个组合齐全就行。它只决定
- *       "方/圆分别摆到哪个点位"(即 `T1[]` 里的先后)。
- * @note ★ 占位值, NX 接入后换成回传值。
- */
+/** 形状兜底, 与颜色兜底配对 (槽2 红方 / 槽3 红圆 / 槽4 蓝方 / 槽5 蓝圆)。★ 占位值。 */
 static BlockShape_t collect_default_shape(uint8_t slot)
 {
     return (slot == 2u || slot == 4u) ? SHAPE_RECT : SHAPE_CYLINDER;
 }
 
-/**
- * @brief 读一颗已经夹住的物块 (形状 + 颜色), 存进 g_tt。
- * @param slot  物理槽号 2~5。调用时该槽必须**已经夹紧**、且转盘已经把它
- *              转到颜色传感器前面并停稳。
- */
+/** 读已夹紧物块的形状和颜色, 写入 g_tt。调用前该槽必须夹紧并停稳。 */
 static void identify_slot(uint8_t slot)
 {
     const uint8_t s = (uint8_t)(slot - 1u);   /* 物理槽 → g_tt 下标 */
@@ -273,8 +186,7 @@ static void identify_slot(uint8_t slot)
 }
 
 
-/** 默认颜色分配 —— **2 红 + 2 蓝**, 必须与 ColorIdentif.c 的 `T1[]` 配比一致,
- *  否则 `TT_BlocksCoverTable()` 还是判"凑不齐"、改写也白改。 */
+/* 默认颜色/形状: 2 红 + 2 蓝, 必须与 ColorIdentif.c 的 T1[] 配比一致。 */
 static const Color_TypeDef NF_DEF_COLOR[4] = {
     COLOR_RED, COLOR_RED, COLOR_BLUE, COLOR_BLUE,
 };
@@ -283,21 +195,9 @@ static const BlockShape_t NF_DEF_SHAPE[4] = {
 };
 
 /**
- * @brief 收集结果的颜色配比凑不齐 `T1[]` 时, 把**已采集**的槽整批换成默认表。
+ * @brief 颜色配比凑不齐 T1[] 时, 把已采集的槽整批换成默认表。
  *
- * **为什么需要**: 摆放阶段 `TT_SeekBlock()` 是按**颜色**去 `T1[]` 里逐个搜槽的,
- * 而 `T1[]` 要的是 2 红 + 2 蓝。识别一旦不可信 (颜色一票都没有 → 走
- * `collect_default_color()`; 或四个槽认出同一个颜色), 某种颜色的槽就不够 →
- * **那几件永远放不出去**。
- *
- * 所以这里不猜"哪个槽错了", 而是按颜色对账; 不齐就按默认表整批改写。
- * 与奖杯分支的 `trophy_fill_missing()` 同一思路。
- *
- * @note 只改**已采集**的槽 —— 漏料的槽不给默认值, 颜色保持 `TT_Init()` 后的
- *       `COLOR_UNKNOWN`, `TT_SeekBlock()` 自然搜不到它, 转盘不会跑去那个空槽
- *       空放一次。少来几个物块就只摆几件, 剩下的照常摆完。
- * @note **形状这一维已经不参与摆放** (V1.28.0), 这里仍写 `NF_DEF_SHAPE` 只是
- *       让 `g_tt` 里不留半套数据, 没人读它。
+ * 只改已采集的槽, 漏料的槽保持 COLOR_UNKNOWN, 不会跑去空槽空放。
  */
 static void block_fill_defaults(void)
 {
@@ -355,22 +255,9 @@ static void trophy_fill_missing(void)
 }
 
 /**
- * @brief 跑完一轮: 圆锥先过, 然后槽 1~5 依次「夹紧 → 转一步 → 识别」。
+ * @brief 跑一轮采集: 先等圆锥, 再按槽号「等物块 → 夹紧 → 转一步 → 识别」。
  *
- *  **两个分支都用 `wait_block_entered()`**, 主判据都是**对射管 (IR)**;
- *  区别只在**退出兜底**:
- *
- *  **物料分支** —— **只有"等圆锥"这一次带车体 X 判据**
- *  (`COLLECT_TRIGGER_X[CONE_SLOT]`), 其余槽**只认 IR + 等满 `COLLECT_IR_TIMEOUT_MS`**:
- *      等锥:  IR 触发 或 车 x **跨过** `COLLECT_TRIGGER_X[1]` → 转到槽 2
- *      等槽2: IR 触发 或 等满超时 → 夹紧槽2 → 转到槽3 → 识别槽2
- *      等槽3: 同上 → 夹紧槽3 → 转到槽4 → 识别槽3
- *      等槽4: 同上 → 夹紧槽4 → 转到槽5 → 识别槽4
- *      等槽5: 同上 → 夹紧槽5 → 转 340°关门 → 识别槽5
- *      传 `rank_out = NULL` (不投票)。
- *
- *  **奖杯分支** —— 也不按 X, 等满 `COLLECT_IR_TIMEOUT_MS` (旧行为), 因为那段
- *  等待就是名次投票窗口。传 `COLLECT_X_OFF` + `&rank`。
+ * 物料分支只有等圆锥带 X 判据; 奖杯分支全走 IR, 等待时长即投票窗口。
  */
 static void collect_slots(void)
 {
@@ -383,7 +270,11 @@ static void collect_slots(void)
             printf("[COLLECT] no cone, abort\r\n");
         }
         for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
-            servo_set_pos(id, SCS_OPEN);
+            for (uint8_t i=0;i<=5;i++)
+            {
+                servo_set_pos(id, SCS_OPEN);
+                osDelay(1);
+            }
         }
         (void)BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
 
@@ -403,7 +294,14 @@ static void collect_slots(void)
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
                 Servo_Angle(BLOCK_CLOSE_DOOR);
-                (void)BlockBasic_GripperClamp(CONE_SLOT);
+                for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
+                    for (uint8_t k=0;k<=5;k++)
+                    {
+                        servo_set_pos(id, SCS_CLOSE);
+                        osDelay(1);
+                    }
+
+                }
             }
         }
 
@@ -411,7 +309,6 @@ static void collect_slots(void)
     }
     else
     {
-        // BlockBasic_LiftTo(UP,10);
         printf("[COLLECT] waiting trophy\r\n");
         (void)BlockBasic_TurntableTo(TROPHY_FIRST_SLOT);
 
@@ -433,7 +330,7 @@ static void collect_slots(void)
                        (unsigned)slot, (unsigned)NX_GetTrophyCount());
             }
 
-            osDelay(40);
+            osDelay(190);
             if (slot < TROPHY_LAST_SLOT) {
                 (void)BlockBasic_TurntableTo((uint8_t)(slot + 1u));
             } else {
@@ -442,13 +339,13 @@ static void collect_slots(void)
             (void)BlockBasic_GripperClamp(slot);
         }
 
-        /* 三个槽都过完了, 现在才谈得上"缺哪一个" */
+        /* 三个槽过完, 用排除法补缺失名次 */
         trophy_fill_missing();
         NX_RequestMode(NX_MODE_CIRCLE);
         NX_ApplyMode();
-        BlockBasic_LiftToAbs(32.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
+        BlockBasic_LiftToAbs(31.5f);   /* 奖杯收完抬升 */
 
-        BlockBasic_LiftToAbs(31.0f);   /* 奖杯收完抬到 28mm (等价原 UP,25: 3+25) */
+        // BlockBasic_LiftToAbs(31.0f);   /* 备选高度 */
     }
 }
 
@@ -473,7 +370,6 @@ void BlockCollect_Start(void)
 void BlockCollect_Reset(void)
 {
     s_req     = false;
-    // s_running = false;
     s_done    = false;
 }
 
@@ -505,3 +401,5 @@ void servo_set_pos(uint8_t id, uint16_t pos)
         (void)SCS_WritePos(id, pos, SCS_TIME, SCS_SPEED);
     }
 }
+
+

@@ -21,12 +21,6 @@ static struct {
     volatile uint8_t color;      /* 最近一帧的帧头后第一个字节 */
     MSP_rx_state_t   rx_state;   /* 只在 ISR 里推进 */
 
-    /* 投票票箱 (V1.27.1): ISR 侧**每收到一帧就 +1**, 由 MSP_Color_Vote() 读并清。
-     *
-     * 为什么不能拿上面的 `pending` 计票: 它是个**灯**不是**计数器** —— 同一批
-     * 连着到的帧把它置 1 多次, `MSP_Color_Take()` 每次只取走最后一帧, 一个
-     * 10ms 窗口里的其余几帧票就丢了 ("一帧 = 一票"从这儿断掉)。
-     * 颜色字符在 ISR 里就知道, 所以按颜色分开计最准, 不必事后反推。 */
     volatile uint16_t ok_red;
     volatile uint16_t ok_blue;
 
@@ -35,7 +29,7 @@ static struct {
     volatile uint8_t  digits_len;
     volatile uint8_t  frame_ready;   /* 1 = 有一整帧没被 MSP_Color_DebugPoll 打印 */
 
-    /* 诊断 (ISR 写, 任务读, 故 volatile) */
+    /* 诊断  */
     volatile uint32_t rx_bytes;
     volatile uint32_t rx_chars;
     volatile uint32_t rx_ok;
@@ -54,9 +48,6 @@ static void MSP_StartRx(void)
         return;
     }
 
-    /* ReceiveToIdle_DMA 内部走 HAL_DMA_Start_IT, 会连半传输(HT)中断一起打开,
-     * 缓冲收到一半时同样触发 RxEvent, 把一次接收切成两截。
-     * 本驱动按「总线 IDLE + 收满」两种事件处理, 不需要 HT。 */
     __HAL_DMA_DISABLE_IT(&hdma_usart2_rx, DMA_IT_HT);
 }
 
@@ -77,7 +68,7 @@ void msp_color_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
         s_msp.rx_bytes++;
 
-        /* 帧尾有 \r\n, 空白一律不参与状态机, 在这里吃掉 */
+        /* 帧尾有 \r\n, 空白一律不参与状态机 */
         if (b == '\r' || b == '\n' || b == ' ' || b == '\t' || b == '\0') {
             continue;
         }
@@ -95,8 +86,7 @@ void msp_color_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
             if (b == '3') {
                 s_msp.rx_state = MSP_RX_COLOR;
             } else if (b != 'A') {
-                /* 不是 '3' 也不是 'A' → 这个 'A' 是误配, 回去重找帧头。
-                 * 是 'A' 的话就停在这 —— 它本身就是新帧头的第一字节。 */
+
                 s_msp.rx_state = MSP_RX_WAIT_A;
             }
             break;
@@ -109,7 +99,6 @@ void msp_color_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
                 s_msp.pending = 1u;     /* 给 Take()/Wait() 用 (调试打印 + 单帧等待) */
                 s_msp.rx_ok++;
 
-                /* 计票在这里, 不在 Take() —— 见 s_msp.ok_red 的说明 */
                 if (b == 'r') {
                     s_msp.ok_red++;
                 } else {
@@ -194,17 +183,6 @@ bool MSP_Color_Vote(uint32_t window_ms, Color_TypeDef *out)
     uint32_t t0 = HAL_GetTick();
     uint16_t votes[COLOR_COUNT] = { 0u };    /* 只用 [COLOR_RED] / [COLOR_BLUE] */
 
-    /* 开窗清零: 只算**本窗口内**收到的帧 (V1.27.1)。
-     *
-     * 与 V1.26.7 的"不预先丢残留帧"是**相反**的取舍, 理由:
-     * 票箱一改成计数器, "手上那帧"就变成了"上次 identify_slot 以来的**全部**帧",
-     * 其中大部分是转盘转动过程中扫到的旧槽 —— 那才是垃圾。而每帧一票之后,
-     * 一个窗口收到的票数远多于从前 (从前每 10ms 顶多 1 票), "票不够"的前提
-     * 本身已经不存在了。
-     *
-     * @note 这里是任务侧清零、ISR 侧自增, 严格说有一拍的竞态: 极少数情况下
-     *       开窗那一瞬间到的帧会被漏掉/多算。窗口是几百 ms、且取的是多数,
-     *       对结果无影响。 */
     s_msp.ok_red  = 0u;
     s_msp.ok_blue = 0u;
 
@@ -212,11 +190,11 @@ bool MSP_Color_Vote(uint32_t window_ms, Color_TypeDef *out)
         osDelay(10);
     }
 
-    /* 窗口结束: 读票并清, 给下一次调用留干净票箱 */
+    /* 窗口结束 */
     votes[COLOR_RED]  = s_msp.ok_red;   s_msp.ok_red  = 0u;
     votes[COLOR_BLUE] = s_msp.ok_blue;  s_msp.ok_blue = 0u;
 
-    /* 取多数: 严格大于 → 同票时取先遍历到的 (COLOR_RED) */
+    /* 取多数 */
     Color_TypeDef best = COLOR_UNKNOWN;
     for (Color_TypeDef i = COLOR_RED; i < COLOR_COUNT; i++) {
         if (votes[i] > votes[best]) {
@@ -253,7 +231,7 @@ bool MSP_Color_DebugPoll(void)
         buf[i] = (char)s_msp.digits[i];
     }
     buf[n] = '\0';
-    // printf("[MSP-RX] color='%c' rgb_raw=\"%s\"\r\n", (char)s_msp.color, buf);
+    printf("[MSP-RX] color='%c' rgb_raw=\"%s\"\r\n", (char)s_msp.color, buf);
     (void)buf;
     return true;
 }

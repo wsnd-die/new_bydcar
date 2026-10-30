@@ -8,13 +8,6 @@ void task_init()
         xQueueCreate(5, sizeof(TaskCommand_t));
 }
 
-/*Event_Navigation
-     Event_LinFolL
-     Event_LinFolR
-     Event_STOP
-     Event_STEERING_ROTATE
-cmd
-*/
 void task_send(SystemMode_t mode)
 {
     TaskCommand_t cmd;

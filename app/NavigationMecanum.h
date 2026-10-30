@@ -12,25 +12,17 @@ extern "C" {
  * 类型定义
  * ============================================================ */
 
-/*
- * 世界坐标系约定：
- *   X 轴：前方（车头朝向 0° 时正对的方向）
- *   Y 轴：左方（右手系，Z 轴向上）
- *   yaw：世界航向角，弧度制，0 = 正对 X 轴，CCW 为正
- */
+/* 世界坐标系: X 前方, Y 左方 (右手系), yaw 弧度 CCW 为正, 范围 [-π, π] */
 typedef struct {
-    float x;       /* 世界 X 坐标，单位：m */
-    float y;       /* 世界 Y 坐标，单位：m */
-    float yaw;     /* 世界航向角，单位：rad，范围 [-π, π] */
+    float x;       /* 世界 X 坐标, m */
+    float y;       /* 世界 Y 坐标, m */
+    float yaw;     /* 世界航向角, rad, [-π, π] */
 } World_Dir_t;
 
-/* 当前自身位姿（世界坐标系） */
+/* 当前自身位姿 (世界坐标系) */
 extern World_Dir_t Self_Dir;
 
-/** 1 = 当前有一段路线正被 Nav_GoToWorld 驱动（进入驱动循环置 1, 三个出口清 0）。
- *  @note 由 worker_task.c 的 `Route_AbortRequest()` 当判据用: **没有段在跑时
- *        进料事件不置打断标志** —— 否则迟到的进料会打在下一段头上, 使其刚起步
- *        就被"打断", 而游标照常推进 → 平白吃掉一个点位。 */
+/** 1 = 当前有路线段正被 Nav_GoToWorld 驱动 (Route_AbortRequest 判据用)。 */
 extern volatile uint8_t g_nav_running;
 
 /* ============================================================
@@ -40,14 +32,10 @@ extern volatile uint8_t g_nav_running;
 /* 最大路径点数量 */
 #define NAV_WAYPOINT_MAX  32
 
-/** 角度 → 弧度 (π/180)。写路径点 yaw 用: -90.0f * NAV_DEG2RAD
- *  @note 常量表达式, 可直接用于数组静态初始化。 */
+/** 角度 → 弧度 (π/180)，常量表达式，可用于静态初始化。 */
 #define NAV_DEG2RAD       0.01745329252f
 
-/* ============================================================
- * 世界系位置闭环参数 (100Hz, OPS9 反馈)
- * 全部为初版整定值, 上机按实际响应调, 改完记 clauderecord。
- * ============================================================ */
+/* 世界系位置闭环参数 (OPS9 反馈)。全部为初版整定值，改完记 clauderecord。 */
 #define NAV_DT                 0.011f   /* 名义控制周期 s (执行器内 osDelay(5) 使实际 ~15ms) */
 #define NAV_LOOP_TICKS         5u     /* osDelay(10) → 名义 100Hz */
 #define NAV_TIMEOUT_MS         10000u  /* 单点超时 ms */
@@ -60,38 +48,28 @@ extern volatile uint8_t g_nav_running;
 #define NAV_VMAX_W             2.5f    /* 角速度限幅 rad/s */
 #define NAV_ACC_XY             1.5f    /* 平移加速度 m/s² (软启动) */
 #define NAV_ACC_W              1.5f    /* 角加速度 rad/s² (软启动) */
-#define NAV_TOL_XY             0.04f   /* 到达容差 3cm */
-#define NAV_TOL_YAW            0.1f   /* 到达容差 ~2.9° */
+#define NAV_TOL_XY             0.07f   /* 到达容差 3cm */
+#define NAV_TOL_YAW            0.12f   /* 到达容差 ~2.9° */
 #define NAV_YAW_DEADBAND       0.0275f /* rad ≈ 1.0° (取容差的 1/3) */
 #define NAV_W_DEADBAND         0.047f
 #define NAV_ARRIVE_TICKS       5u      /* 连续 5 拍判到达 (抗单帧抖动) */
 #define NAV_MAX_INVALID_TICKS  20u     /* OPS9 离线容忍 0.3s, 超限零速保持 */
 
 /* ============================================================
- * 平移轴速度规划 —— V1.33.3 起为**固定距离硬切换**
+ * 平移轴速度规划 —— 固定距离硬切换
  *
- *      |e| ≤ NAV_SWITCH_D : PID         v = Kp·e − Kd·v_now
- *      |e| > NAV_SWITCH_D : 制动曲线     v = ±√(2·a_brk·|e|)   即 v² = 2·a·x
+ *      |e| ≤ NAV_SWITCH_D : PID      v = Kp·e − Kd·v_now
+ *      |e| > NAV_SWITCH_D : 制动曲线 v = ±√(2·a_brk·|e|)
  *
- * 近场交给 PID 收敛到点上; 远场按"此刻还刹得住"给速度, 补上纯 P 缺的减速约束。
- * 曲线**只用在远场** —— 它在 e→0 处等效增益发散, 当全程参考会"到点来回晃"
- * (V1.24.0 踩过)。
- *
- * ⚠ 两条律在 |e| = D 处**不连续**, 见下面 NAV_SWITCH_D 的 ★。
- * ⚠ 全部为初值, 上机按实际响应调, 改完记 clauderecord。
+ * 曲线只当远场上限 —— 它在 e→0 处增益发散，当参考会"到点来回晃"。
+ * ⚠ 两条律在 |e| = D 处不连续；全部为初值，上机再调。
  * ============================================================ */
 #ifndef NAV_XY_PROFILE
 #define NAV_XY_PROFILE   1        /* 1 = 近场 P + 制动上限; 0 = 退回旧的位置 PD (A/B 用) */
 #endif
 
-/** 航向控制器选择（本次新增, 范式同上）。
- *  1 = **串级航向环**: S 型轨迹 + 速度前馈 + 加速度前馈。**V1.33.0 起步进就
- *      在 `Nav_GoToWorld()` 的循环里**（`Angle_Step()` → `Angle_GetW()`），
- *      与下发同拍。见 `algorithm/angle_ctrl.h` 的"步进位置"。
- *  0 = 退回原来的**手写单环 PD**（`NAV_KP_YAW`/`NAV_KD_YAW`/`NAV_W_DEADBAND`,
- *      逐字节等价于改动前）—— 一键 A/B 对比与回退。
- *  @note 置 0 时没人使能 angle_ctrl(`Angle_Step()` 的调用点本身也在这个
- *        `#if` 里) → `Angle_GetW()` 恒返回 0, 无副作用。 */
+/** 1 = 串级航向环 (angle_ctrl), 步进在 Nav_GoToWorld() 循环里;
+ *  0 = 退回手写单环 PD (A/B 回退用)。 */
 #ifndef NAV_YAW_CASCADE
 #define NAV_YAW_CASCADE  1
 #endif
@@ -106,23 +84,23 @@ extern volatile uint8_t g_nav_running;
 
 #define NAV_SWITCH_LO   0.3f   /* |e| ≤ LO → 纯近场律 (爬行封顶) */
 #define NAV_SWITCH_HI   0.7f   /* |e| ≥ HI → 纯远场律 (制动曲线上限) */
-#define NAV_CREEP_X_V   0.43f   /* X 轴近场爬行速度上限 m/s —— **默认值** */
-#define NAV_CREEP_Y_V   0.43f   /* Y 轴近场爬行速度上限 m/s —— **默认值** */
+#define NAV_CREEP_X_V   0.55f   /* X 轴近场爬行速度上限 m/s —— **默认值** */
+#define NAV_CREEP_Y_V   0.55f   /* Y 轴近场爬行速度上限 m/s —— **默认值** */
 
 
 #define NAV_SLOW_WP_IDX   7u     /* "12 摆放e 点" (g_waypoints[] 下标 7) */
 #define NAV_SLOW_WP_IDX2  6u
-#define NAV_SLOW_WP_LIM   0.3f   /* 走这个点时的近场爬行上限 m/s (X/Y 共用) */
+#define NAV_SLOW_WP_LIM   0.35f   /* 走这个点时的近场爬行上限 m/s (X/Y 共用) */
 
-#define NAV_HOME_SPEED   1.3f
+#define NAV_HOME_SPEED   1.4f
 
 extern volatile float g_nav_leg_speed;
 
 
 #define NAV_ARC_V         0.55f    /* 圆弧线速度 m/s */
 #define NAV_ARC_ACC       0.9f     /* 线速度软启动加速度 m/s² */
-#define NAV_ARC_KP_R      2.5f     /* 径向误差修正增益 1/s (把车拉回圆上) */
-#define NAV_ARC_VMAX_R    0.5f     /* 径向修正速度限幅 m/s */
+#define NAV_ARC_KP_R      1.6f     /* 径向误差修正增益 1/s (把车拉回圆上) */
+#define NAV_ARC_VMAX_R    0.6f     /* 径向修正速度限幅 m/s */
 
 
 
@@ -135,23 +113,15 @@ extern uint8_t     s_idx;
 
 
 /**
- * @brief 导航到目标世界坐标（世界系位置闭环）
+ * @brief 导航到目标世界坐标 (OPS9 位置闭环, 阻塞直到到达或超时)
  *
- * 以 OPS9 位姿 (locator_ops9.get_pose, 世界系 x/y/yaw) 为反馈，
- * 三轴并行 PD (Ki=0) 输出世界系期望速度 → 软启动加速度斜坡 →
- * 世界→车体旋转 → Mecanum_Calc_Full_V → Send_commandmotor
- * 下发电机速度环。阻塞直到到达或超时，退出时零速停车。
- *
- * @note 入口按契约关角度环（g_angle_ctrl_enable=0 + osDelay(20)）独占电机
- *       控制权，**但退出时不恢复该标志** —— 调用方若后续需要角度环，得自己
- *       重新置 1（对照 algorithm/arc_path.c 的 Arc_Run/Arc_Abort 是有借有还的）。
- * @note 反馈无效按 NAV_MAX_INVALID_TICKS 容忍：短时冻结指令继续跑，
- *       超限零速保持并清斜坡，恢复后从零重新软启动。
- * @param target_x    目标世界 X 坐标，单位：m
- * @param target_y    目标世界 Y 坐标，单位：m
- * @param target_yaw  目标世界航向角，单位：rad
- * @return true       已到达（连续 NAV_ARRIVE_TICKS 拍误差入容差）
- * @return false      超时（NAV_TIMEOUT_MS，含反馈长期无效）
+ * @note 入口按契约关角度环 (g_angle_ctrl_enable=0), **退出不恢复** ——
+ *       调用方需要角度环得自己置 1。
+ * @note 反馈无效按 NAV_MAX_INVALID_TICKS 容忍, 超限零速保持。
+ * @param target_x    目标世界 X, m
+ * @param target_y    目标世界 Y, m
+ * @param target_yaw  目标世界航向, rad
+ * @return true 已到达; false 超时 (含反馈长期无效)
  */
 bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
 
@@ -159,59 +129,31 @@ bool Nav_GoToWorld(float target_x, float target_y, float target_yaw);
 void Nav_SetLegSpeed(float k);
 
 /**
- * @brief 分点导航 —— 按 g_waypoints[] 逐点推进
+ * @brief 分点导航 —— 按 g_waypoints[] 逐点推进 (一次一步)
  *
- * 每次调用驱动到**一个**路径点（内部游标记进度），走完整张表后恒返回 true。
- * "一次一步"是刻意的：worker_task.c 的 NF_Stage_Navigation() 每被流程调到
- * 一次就推进一站，站点之间流程还能经 NF_DispatchNext() 分发到循迹等其它阶段。
- *
- * @note 到达判据、超时、反馈失效处理都在 Nav_GoToWorld() 里，本函数只做推进。
- * @note 与旧副本 (4eedf6a) 的差异：旧版把第 13 点之后的两点塞在同一次调用里
- *       （`PontIntex == 13` 的特判），这里不再特判，表中 13/14 号就是普通点。
- *
- * @note   V1.23.0 起游标在**两种**情况下都推进：到达，或**被打断**
- *         （`Nav_LastAborted()`）—— 打断的语义是"改奔下一个点"，不是重试。
- *         只有**超时**才不推进、下次重试。
- *
- * @warning 游标只加不校验：一轮物料采集有 5 次 IR 边沿 = 烧掉 5 个点。
- *          路线只有 `g_waypoint_count` 个点，用光后本函数恒返回 true 空转。
- *
- * @return true   本点已到达 / 被打断跳过 / 整条路线已走完
- * @return false  本点超时未到达（游标不推进，下次重试）
+ * @note 到达判据 / 超时 / 反馈失效都在 Nav_GoToWorld() 里, 本函数只推进游标。
+ * @note 到达或被打断都推进游标 (打断 = 改奔下一点); 只有超时不推进、下次重试。
+ * @warning 游标只加不校验, 路线点用光后恒返回 true 空转。
+ * @return true 本点到达 / 被打断跳过 / 路线已走完; false 超时
  */
 bool Nav_FeDuanPoint(void);
 
 /**
- * @brief 上一次 Nav_FeDuanPoint() **走完**的点号（1 基, 与 g_waypoints[] 的注释编号一致）。
- * @return 0    还没走过点 / 该点超时没走到 / 路线已走完
- * @note   给 worker_task.c 的"到位后向前蹭料"挑点位用的（见 NF_CREEP_WP[]）。
+ * @brief 上一次 Nav_FeDuanPoint() 走完的点号 (1 基); 0 = 没走到 / 已走完。
  */
 uint8_t Nav_LastWaypointNo(void);
 
 /**
- * @brief 世界系相对移动 —— 以当前 Self_Dir 为基准走一个相对位移
+ * @brief 世界系相对移动 —— 目标 = Self_Dir + (target_x, target_y, target_yaw)
  *
- * 三个参数都是**世界系增量**，不是车体量：
- *     目标 = Self_Dir + (target_x, target_y, target_yaw)
- * 内部转调 Nav_GoToWorld() 做闭环，阻塞直到到位或超时。
- *
- * @note **不是车体坐标。** 想让车沿车头方向走 d 米，得先把 d 投到世界系；
- *       直接传 (d, 0, 0) 只有车头正对世界 +X 轴时才等于"前进"。
- * @note target_yaw 与 Self_Dir.yaw 相加后**未归一化到 ±π**，调用方若传大角度
- *       需自行 wrap。
- * @note 旧版同名函数是"先原地转到 rotate_rad，再按车体 forward/left 平移"，
- *       与本实现语义完全不同 —— 本头文件此前贴的是旧版文档，已按现实现更正。
+ * @note **不是车体坐标**: 传 (d, 0, 0) 只在车头正对世界 +X 时才是"前进"。
+ * @note target_yaw 相加后未归一化到 ±π, 大角度需调用方自行 wrap。
  */
 bool Nav_MoveBody(float target_x, float target_y, float target_yaw);
 
 /**
- * @brief  上一次 `Nav_GoToWorld()` 是不是被**打断**的（而不是超时）。
- *
- *  V1.23.0 起 `Nav_GoToWorld()` 可以被 `g_route_abort`（见 worker_task.h）
- *  中途打断，此时它仍然返回 `false` —— 靠本函数区分"超时"和"被打断"。
- *
- * @warning **必须在关心那次 `Nav_GoToWorld()` 之后立刻调用**，中间不能夹别的
- *          会走导航的调用（`Place()`、`Nav_MoveBody()` 等都会重置这个标记）。
+ * @brief  上一次 Nav_GoToWorld() 是被打断的 (而不是超时)。
+ * @warning 必须在关心那次调用之后立刻调, 中间不能夹会走导航的调用。
  */
 bool Nav_LastAborted(void);
 
@@ -224,37 +166,21 @@ typedef enum {
 /**
  * @brief 定半径圆弧 —— 基于 OPS9 位置闭环, 阻塞直到走完或超时
  *
- * 从当前位姿出发, 以半径 Radius 走一条圆弧, 扫过圆心角 Angle 后停下。
- * 方向由 Cricle_t 给出: Nav_CricleL 向左 (CCW), Nav_CricleR 向右 (CW)。
- *
- * 控制结构: 圆心由起点位姿推得 (左弧圆心在车左侧 R 处); 每拍用 OPS9
- * 算出当前扫过的圆心角与径向误差 —— 切向匀速 (软启动) + 径向 P 修正 +
- * 航向"前馈 v/R + 切线误差 P"闭环, 经 Mecanum_Calc_Full_V 下发电机。
- *
- * @note  Angle 单位是**弧度** (与全工程角度约定一致), 度数写 NAV_DEG2RAD 倍。
- * @note  入口按契约关角度环 (g_angle_ctrl_enable=0 + osDelay(20)) 独占电机,
- *        退出**不恢复**该标志 (与 Nav_GoToWorld 同, 调用方需要角度环自己置 1)。
- * @note  反馈无效按 NAV_MAX_INVALID_TICKS 容忍; 超时按几何时长 ×1.5 + 2s 兜底;
- *        支持 g_route_abort 打断 (IR 进料)。任何出口都零速停车并刷新 Self_Dir。
- * @warning Radius / Angle 只取绝对值 —— 方向只能靠 Cricle_t 给, 传负值不报错。
- *
- * @param Cricle_t  方向: Nav_CricleL 左弧 / Nav_CricleR 右弧
- * @param Radius    圆弧半径, 单位 m (>0)
- * @param Angle     扫过的圆心角, 单位 rad (>0)
+ * @note Angle 单位是弧度; 支持 g_route_abort 打断。任何出口都零速停车。
+ * @warning Radius / Angle 只取绝对值 —— 方向只能靠 Cricle_t 给。
+ * @param Cricle_t  Nav_CricleL 左弧 / Nav_CricleR 右弧
+ * @param Radius    半径, m (>0)
+ * @param Angle     扫过的圆心角, rad (>0)
  */
 void Nav_Cricle(Nav_Cricle_t Cricle_t, float Radius, float Angle);
+
 /**
- * @brief 依次执行所有路径点
- *
- * 从 g_waypoints[0] 到 g_waypoints[g_waypoint_count-1]，
- * 逐点调用 Nav_GoToWorld。阻塞直到全部完成或中途失败。
- *
- * @return true  全部路径点执行成功
- * @return false 中途某点执行失败
+ * @brief 依次执行所有路径点 (逐点 Nav_GoToWorld, 阻塞)。
+ * @return true 全部成功; false 中途某点失败
  */
 bool Nav_RunWaypoints(void);
 
-
+ void NAV_SHORT_WORD(float x, float y, float yaw);
 
 #ifdef __cplusplus
 }

@@ -2,7 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include "cmsis_os.h"   /* osDelay —— 任务里不能用 HAL_Delay(忙等, 不让出 CPU) */
+#include "cmsis_os.h"   /* osDelay —— 任务里不能用 HAL_Delay(忙等) */
 
 // LED颜色
 uint32_t ws2812_color[WS2812_NUM] = {0};
@@ -12,10 +12,8 @@ static uint32_t _ws2812_color_current[WS2812_NUM];
 
 /**
  * @brief  上一帧是否还在 DMA 搬运中
- * @note   判据用 DMA 通道自己的 **CCR.EN 位** —— Normal 模式下 CNDTR 减到 0 时
- *         硬件自动清 EN，这是硬件的真话。
- *         **不要用 HAL 的 hdma->State**：它要靠 DMA 完成中断回来才复位，
- *         一旦中断没来就永久误判为"忙"，把之后所有发送都挡死。
+ * @note   判据用 DMA 的 **CCR.EN 位**。**不要用 HAL 的 hdma->State** ——
+ *         它靠完成中断复位，中断不来就永久误判为忙，挡死之后所有发送。
  */
 static uint8_t ws2812_busy(void)
 {
@@ -36,22 +34,16 @@ void ws2812_update(void)
 	static uint16_t ws2812_data[RST_PERIOD_NUM * 2 + WS2812_NUM * 24];
 	static uint8_t  s_dbg = 0u;
 
-	/* ← 临时诊断(定位完删): 打印前 6 次, 把整条链问清楚 ——
-	 *   没打印      → ws2812_update() 根本没被呼叫(任务没跑 / 没人调)
-	 *   busy=1      → 被发送中判断挡住, 一帧都发不出去
-	 *   st != 0     → HAL_TIM_PWM_Start_DMA 失败(定时器/DMA 状态卡住)
-	 *   st == 0     → 启动成功, 数据应该出去了 → 问题在灯带/接线一侧 */
+	/* ← 临时诊断(定位完删): 打印前 6 次。
+	 *   没打印 → update 没被调用; busy=1 → 被守卫挡住;
+	 *   st != 0 → Start_DMA 失败; st == 0 → 数据出去了, 查灯带/接线。 */
 	if (s_dbg < 6u) {
 		s_dbg++;
 		printf("[ws] update called #%u, busy=%u\r\n", (unsigned)s_dbg, (unsigned)ws2812_busy());
 	}
 
-	/* ⚠ 临时: **拿掉「发送中」守卫**, 与 keysking 原版一致(F103 参照工程就是
-	 *    直接调 HAL_TIM_PWM_Start_DMA, 没有 busy 判断)。
-	 *    原因: 串口实测 busy 从第 2 次起恒为 1 —— 判据是 DMA 的 CCR.EN 位,
-	 *    而它一直没被硬体清掉(说明那笔传输没跑完) ⇒ 守卫把之后所有发送全挡死,
-	 *    连"重送一帧"的机会都没有。先按参照工程来, 看 start_dma 的回传值。 */
-	/* 诊断结论出来后恢复:
+	/* ⚠ 临时: 守卫被拿掉 —— 实测 CCR.EN 一直没被硬件清掉, 守卫会挡死所有发送。
+	 * 诊断结束后恢复这段:
 	if (ws2812_busy()) {
 		return;
 	}
@@ -100,7 +92,7 @@ void ws2812_gradient(uint8_t steps, uint16_t delay_ms)
 	static float r_step[WS2812_NUM], g_step[WS2812_NUM], b_step[WS2812_NUM];
 
 	if (steps == 0u) {
-		return;                 /* 原版没防 0, 会被当除数 */
+		return;                 /* 防除 0 */
 	}
 
 	// 提取初始颜色，并计算每步的渐变步长
@@ -129,7 +121,7 @@ void ws2812_gradient(uint8_t steps, uint16_t delay_ms)
 		}
 
 		ws2812_update();
-		osDelay(delay_ms);      /* 原来是 HAL_Delay: 忙等, 不等让出 CPU */
+		osDelay(delay_ms);
 	}
 }
 

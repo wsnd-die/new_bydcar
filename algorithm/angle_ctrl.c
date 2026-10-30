@@ -1,8 +1,6 @@
 /**
  * @file    angle_ctrl.c
  * @brief   航向串级控制实现。结构与参数说明见 angle_ctrl.h。
- *
- * @note V1.33.2 删掉了 S 型轨迹发生器 —— θ_target 直接进外环, 不再过参考模型。
  */
 
 #include "Common_used.h"
@@ -14,7 +12,7 @@
 
 /* ---- 控制状态 ----
  * 步进跑在 Nav_GoToWorld() 的循环里, 单上下文、无并发。
- * 保留 volatile 只为调试器能直接看到。 */
+ * volatile 只为调试器能直接看到。 */
 static volatile float   s_target = 0.0f;   /* 目标航向 (rad, 已 unwrap 的连续角) */
 static volatile uint8_t s_enable = 0u;     /* 1 = 步进计算并更新输出 */
 
@@ -22,9 +20,8 @@ static volatile float    s_cmd_w = 0.0f;   /* 输出角速度指令 (rad/s, CCW+
 static volatile uint32_t s_tick  = 0u;     /* 心跳 (每拍自增) */
 
 /* ---- 步进私有 ----
- * 两级 PID 用工程既有的 `algorithm/pid.c` (位置式; 状态在调用方结构体里, 可重入)。
- * 它**没有 dt 项**(按采样整定) ⇒ I 增益要按采样率折算, 见 `ANG_KI_W`。
- * 两级都不设 D —— 内环的反馈量本身就是外环误差的导数。 */
+ * 两级 PID 用 algorithm/pid.c (位置式, 无 dt 项 ⇒ I 增益按采样率折算)。
+ * 两级都不设 D —— 内环反馈量本身就是外环误差的导数。 */
 static pid_type_def s_pid_th;     /* 外环: 角度 → 角速度指令 (只 P) */
 static pid_type_def s_pid_w;      /* 内环: 角速度 → 电机指令 (P + I) */
 
@@ -33,8 +30,8 @@ static volatile float s_yaw_meas; /* 最近一拍实测航向 (遥测) */
 static volatile float s_e_th;     /* 最近一拍角度误差 (rad, 仅遥测) */
 
 /* ---- wz 零偏 ----
- * ⚠ **未实现**: 实测 OPS9 静止时 heading_rate ≈ -0.0074 rad/s ≠ 0。不减掉它,
- * 内环 e_ω 带恒定偏置 ⇒ 车会慢慢自转。这两个变量目前**无人赋值也无人读取**。 */
+ * ⚠ **未实现**: OPS9 静止时 heading_rate ≈ -0.0074 rad/s, 不补偿车会慢慢自转。
+ * 这两个变量目前无人赋值也无人读取。 */
 static volatile float   s_wz_bias   = 0.0f;
 static volatile uint8_t s_bias_done = 0u;
 
@@ -101,7 +98,7 @@ void Angle_Enable(float yaw_target)
 
     s_w_filt = p.wz;            /* 用当前实测角速度播种, 免重使能时的顿挫 */
 
-    /* 走近路 + 连续角: 结果与 OPS9 的 yaw 零点是否标定无关 */
+    /* 走近路 + 连续角: 与 OPS9 的 yaw 零点无关 */
     s_target = p.yaw + ANG_WrapPi(yaw_target - p.yaw);
 
     s_cmd_w = 0.0f;
@@ -111,8 +108,7 @@ void Angle_Enable(float yaw_target)
 
 void Angle_Retarget(float yaw_target)
 {
-    /* 不重置 PID/输出 —— 只在连续角上把目标挪到"走近路可到"的等价角。
-     * 用于圆弧那种目标航向每拍都在变的场合。 */
+    /* 不重置 PID/输出, 只把目标挪到走近路的等价角 (圆弧等动目标用) */
     s_enable = 0u;
     __DMB();
     s_target = s_target + ANG_WrapPi(yaw_target - s_target);
@@ -149,10 +145,9 @@ void Angle_GetTelem(AngleTelem_t *out)
 }
 
 /**
- * @brief 单拍步进 —— 由 `Nav_GoToWorld()` 的循环每拍调一次
+ * @brief 单拍步进 —— 由 Nav_GoToWorld() 每拍调一次
  *
- * @note  顺序必须是「先 `Angle_Enable()` 再本函数」; 未使能时只自增心跳。
- * @note  保持纯计算(只用 fabsf), 便于将来挪回中断。
+ * @note 顺序必须是「先 Angle_Enable() 再本函数」; 未使能时只自增心跳。
  */
 void Angle_Step(void)
 {

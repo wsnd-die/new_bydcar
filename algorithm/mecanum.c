@@ -26,23 +26,10 @@ static uint16_t Mecanum_ProcessWheel(float raw_speed, uint8_t *dir)
 }
 
 /**
-  * @brief  麦轮逆运动学解算（单轴模型: V + ω）
-  * @note   麦轮正向运动学：
-  *         Vx = (ω1 + ω2 + ω3 + ω4) * R / 4
-  *         Vy = (-ω1 + ω2 + ω3 - ω4) * R / 4
-  *         ω  = (-ω1 + ω2 - ω3 + ω4) * R / (4 * (a + b))
-  *
-  *         逆解（Vy=0 时）：
-  *         ω1 = (V - (a+b)·ω) / R     前左
-  *         ω2 = (V + (a+b)·ω) / R     前右
-  *         ω3 = (V - (a+b)·ω) / R     后左
-  *         ω4 = (V + (a+b)·ω) / R     后右
-  *
-  *         轮子布局（俯视图）：
-  *          前左(ω1) ─── 前右(ω2)
-  *             │    ↑x(前)   │
-  *             │             │
-  *          后左(ω3) ─── 后右(ω4)
+  * @brief  麦轮逆运动学解算 (单轴模型: V + ω)
+  * @note   逆解 (Vy=0), a = 半轮距, b = 半轴距:
+  *           ω1 = V − (a+b)·ω  前左      ω2 = V + (a+b)·ω  前右
+  *           ω3 = V − (a+b)·ω  后左      ω4 = V + (a+b)·ω  后右
   */
 MecanumResult Mecanum_Calc(float v, float w)
 {
@@ -94,17 +81,8 @@ MecanumResult Mecanum_Calc(float v, float w)
 }
 
 /**
-  * @brief  麦轮全向逆运动学解算（三自由度: Vx + Vy + ω）
-  * @note   逆解公式（全部3个自由度）：
-  *         ω1 = (Vx - Vy - (a+b)·ω) × coeff   前左（\辊）
-  *         ω2 = (Vx + Vy + (a+b)·ω) × coeff   前右（/辊）
-  *         ω3 = (Vx + Vy - (a+b)·ω) × coeff   后左（/辊）
-  *         ω4 = (Vx - Vy + (a+b)·ω) × coeff   后右（\辊）
-  *
-  *         其中：
-  *         - Vx: 前向速度, Vy: 左向速度, ω: 旋转角速度
-  *         - a = 半轮距, b = 半轴距
-  *         - coeff = 1 / R (或含单位换算的 SPEED_COEFF)
+  * @brief  麦轮全向逆运动学解算 (三自由度: Vx + Vy + ω)
+  * @note   ω1..ω4 = Vx ∓ Vy ∓ (a+b)·ω, 再乘 SPEED_COEFF。
   */
 MecanumResult Mecanum_Calc_Full_V(float vx, float vy, float w)
 {
@@ -140,42 +118,22 @@ MecanumResult Mecanum_Calc_Full_V(float vx, float vy, float w)
     return res;
 }
 
-/* ================================================================
- *  速度模式执行器 —— 把 MecanumResult 下发四轮 (Emm_V5 速度环)
- *  极性映射逐字节镜像 hardware/actuators/Send_motor.c 的
- *  Send_commandmotor(): 前右/前左的方向位取反是底盘装机的硬件约定,
- *  两处必须保持一致, 改动任何一边都要同步另一边。
- * ================================================================ */
-
+/*  速度模式执行器 */
 
 uint32_t malu_cm_topluse_s(float cm)
 {
     return (uint32_t)(cm / (2.0f * MEC_WHEEL_RADIUS * 3.14159265358979f) * 3200);
 }
 
-/* ================================================================
- *  位置模式定距移动 —— 按车体位移算四个轮子的脉冲数, 直接发下去
- *
- *  与 Mecanum_Calc_Full_V 同一套逆解, 只是把"速度"换成"位移"
- *  (两者是线性的, 系数相同), 再把每个轮子的行程换算成 Emm_V5 位置模式的
- *  脉冲数。开环: 发完就等, 不读编码器。
- *
- *  极性映射逐字节镜像 hardware/actuators/Send_motor.c 的 Send_commandmotor():
- *      地址 1 = 前右, 方向位取反
- *      地址 2 = 后左, 方向位原样
- *      地址 3 = 前左, 方向位取反
- *      地址 4 = 后右, 方向位原样
- *  两处必须保持一致, 改任何一边都要同步另一边。
- * ================================================================ */
+
 
 /** 发一个轮子的定距位置指令。dist_m 带符号, >0 = 该轮的"正转"方向。 */
 static void Mecanum_MoveOneWheel(uint8_t addr, float dist_m, uint16_t vel_rpm,uint16_t vel_acc)
 {
     if (fabsf(dist_m) < MEC_POS_MIN_M) {
-        return;                     /* 太短, 不值得发, 也免得脉冲数算成 0 */
+        return;
     }
 
-    /* malu_cm_topluse_s() 收 cm 且返回**无符号** —— 符号在这里自己处理 */
     uint32_t clk = malu_cm_topluse_s(fabsf(dist_m) * 100.0f);
     if (clk == 0u) {
         return;
@@ -188,12 +146,9 @@ static void Mecanum_MoveOneWheel(uint8_t addr, float dist_m, uint16_t vel_rpm,ui
         dir = (dist_m > 0.0f) ? 1u : 0u;   /* 后左 / 后右: 原样 */
     }
 
-    /* raF = 0 → 相对运动 (走这么多脉冲就停); snF = 0 → 立即执行, 不等同步广播。
-     * 四条 CAN 帧前后脚发出去, 间隔亚毫秒级, 定距平移够用。 */
     Emm_V5_Pos_Control(addr, dir, vel_rpm, vel_acc, clk, 0, 0);
 }
 
-/** 四个轮子都报到位了吗 (每个轮子一次 CAN 往返, 内部超时 50ms)。 */
 static bool Mecanum_AllReached(void)
 {
     /* 顺序不重要: 用 && 短路, 第一个没到就不再问后面三个, 省总线 */
@@ -204,7 +159,7 @@ static bool Mecanum_AllReached(void)
 
 bool Mecanum_MoveBodyPos(float fwd_m, float left_m, uint16_t timeout_ms)
 {
-    /* 麦轮逆解只取平移两项 (w = 0)。与 Mecanum_Calc_Full_V 同式。 */
+
     const float fl = fwd_m - left_m;
     const float fr = fwd_m + left_m;
     const float rl = fwd_m + left_m;
@@ -241,15 +196,13 @@ bool Mecanum_MoveBodyPos(float fwd_m, float left_m, uint16_t timeout_ms)
     }
 }
 
-/* ================================================================
- *  编码器读取
- * ================================================================ */
+/* 编码器读取*/
 
 extern volatile uint8_t  can_rx_flag;
 extern FDCAN_RxHeaderTypeDef can_rx_header;
 extern uint8_t can_rx_data[8];
 
-/* ---- 读取单电机实时转速 (RPM) ---- */
+/* ---- 读取单电机实时转速 ---- */
 uint8_t Mecanum_Read_Speed(uint8_t id, int16_t *rpm, uint32_t timeout_ms)
 {
     uint8_t cmd[3] = {id, 0x35, 0x6B};  // S_VEL
@@ -280,7 +233,7 @@ uint8_t Mecanum_Read_Speed(uint8_t id, int16_t *rpm, uint32_t timeout_ms)
     return 0;
 }
 
-/* ---- 读取单电机实时位置 (编码器累计值) ---- */
+/* ---- 读取单电机实时位置  ---- */
 uint8_t Mecanum_Read_Position(uint8_t id, int32_t *pos, uint32_t timeout_ms)
 {
     uint8_t cmd[3] = {id, 0x36, 0x6B};  // S_CPOS

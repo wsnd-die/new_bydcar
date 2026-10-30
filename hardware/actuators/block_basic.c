@@ -10,6 +10,7 @@
 #include "emm_5v.h"
 #include "mecanum.h"        /* Mecanum_MoveBodyPos —— Place() 的定距移动 */
 #include "key.h"
+#include "NavigationMecanum.h"
 #include "servo_scs.h"      /* 转盘 STS3032 总线舵机: SCS_WritePosEx (V1.16.0) */
 #define CLAMP_FLOAT(v, lo, hi)  ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define DEG2RAD(d)              ((d) * 0.01745329252f)
@@ -403,24 +404,27 @@ void Servo_SetAngle(float Angle)
 
 /** 等四个轮子都到位的上限 (ms)。★实测调 —— 这是**超时**, 不是固定延时:
  *  正常走完会提前返回, 只有卡住/掉线才真的等满。 */
-#define PLACE_MOVE_TIMEOUT_MS   650
+#define PLACE_MOVE_TIMEOUT_MS  500
 
 void Place(char dir,float x,float y,int16_t height,uint8_t slot)
 {
     if (dir == 'O')
     {
-        float fwd  = 0.071f + y * PLACE_CIRCLE_SCALE_M;
-        float left = 0.004f + x * PLACE_CIRCLE_SCALE_M;
+        float fwd  = 0.080f + y * PLACE_CIRCLE_SCALE_M;
+        float fwd1 = 0.071f + y * PLACE_CIRCLE_SCALE_M;;
+        float left = 0.008f + x * PLACE_CIRCLE_SCALE_M;
 
         if (height <=0)
         {
-            if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
+            if (!Mecanum_MoveBodyPos(fwd1, left, PLACE_MOVE_TIMEOUT_MS)) {
             }
+            // NAV_SHORT_WORD( fwd, left ,  0.0f);
+            // osDelay(100);
             BlockBasic_GripperRelease(slot);
             // osDelay(10);
             // BlockBasic_GripperRelease(slot);
             BlockBasic_LiftTo(DOWN, abs(height));
-            osDelay(150);
+            osDelay(250);
             /* 后退 */
             if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
             }
@@ -429,16 +433,18 @@ void Place(char dir,float x,float y,int16_t height,uint8_t slot)
         {
             if (slot == 1)
         {
-                if (!Mecanum_MoveBodyPos(fwd+0.001, left+0.002, PLACE_MOVE_TIMEOUT_MS)) {
+                if (!Mecanum_MoveBodyPos(fwd1+0.005, left+0.001, PLACE_MOVE_TIMEOUT_MS)) {
                 }
+                // NAV_SHORT_WORD( fwd+0.001f, left+0.003f ,  0.0f);
                 BlockBasic_GripperRelease(slot);
             if (!Mecanum_MoveBodyPos(-0.14f, 0.0f, PLACE_MOVE_TIMEOUT_MS)) {
             }
         }
             else
             {
-                if (!Mecanum_MoveBodyPos(fwd, left, PLACE_MOVE_TIMEOUT_MS)) {
+                if (!Mecanum_MoveBodyPos(fwd1+0.001, left-0.001, PLACE_MOVE_TIMEOUT_MS)) {
                 }
+                // NAV_SHORT_WORD( fwd, left ,  0.0f);
                 BlockBasic_GripperRelease(slot);
                 BlockBasic_LiftTo(UP, abs(height));
                 osDelay(650);

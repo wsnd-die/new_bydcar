@@ -18,7 +18,7 @@ typedef struct {
     uint8_t       cnt;          /* 与 stable 相反的连续采样数 */
     uint8_t       pressed;      /* 有按下边沿, 读后清 */
     uint8_t       released;     /* 有抬起边沿, 读后清 */
-    uint16_t      hold;         /* 稳定按下持续节拍数 (到 KEY_LONG_PRESS_TICKS 封顶) */
+    uint16_t      hold;         /* 稳定按下持续节拍数 */
     uint8_t       long_pressed; /* 有长按事件, 读后清 */
 } KeyCtx_t;
 
@@ -34,7 +34,7 @@ static uint8_t raw_pressed(const KeyCtx_t *k)
 
 void Key_Init(void)
 {
-    /* 按当前电平取初值, 免得开关本来按着时上电就报一次边沿 */
+    /* 按当前电平取初值 */
     for (uint8_t i = 0; i < (uint8_t)KEY_COUNT; i++) {
         s_key[i].stable       = raw_pressed(&s_key[i]);
         s_key[i].cnt          = 0u;
@@ -52,9 +52,9 @@ void Key_Update(void)
         uint8_t   raw = raw_pressed(k);
 
         if (raw == k->stable) {
-            k->cnt = 0u;            /* 有一拍回到原电平, 抖动计数作废 */
+            k->cnt = 0u;            /* 有一拍回到原电平 */
             if (raw != 0u) {
-                /* 稳定按下期间累计时长, 到 KEY_LONG_PRESS_TICKS 封顶且只报一次 */
+                /* 稳定按下期间累计时长 */
                 if (k->hold < (uint16_t)KEY_LONG_PRESS_TICKS) {
                     if (++k->hold == (uint16_t)KEY_LONG_PRESS_TICKS) {
                         k->long_pressed = 1u;

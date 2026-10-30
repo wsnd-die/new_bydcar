@@ -1,9 +1,6 @@
 /**
- * @file    task.h
- * @brief   事件队列
- *
- *  子事件 (LinFolL/LinFolR/PlaceDown/Navigation/QRCode/FindCircle):
- *    在 Worker 任务 (NLF_TASK 等) 中按 Mode 执行
+ * @file    banyuntask.h
+ * @brief   系统事件定义 —— 驱动源 → defaultTask 调度器 → Worker 任务
  */
 
 #ifndef __TASK_H

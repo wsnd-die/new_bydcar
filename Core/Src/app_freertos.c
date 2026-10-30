@@ -99,8 +99,8 @@ const osThreadAttr_t ops9imu_task_attributes = {
 osThreadId_t gripperHandle;
 const osThreadAttr_t gripper_attributes = {
   .name = "gripper",
-  .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 256 * 4
+  .priority = (osPriority_t) osPriorityHigh,
+  .stack_size = 256 *8
 };
 /* Definitions for FC_TASK */
 osThreadId_t FC_TASKHandle;
@@ -361,7 +361,9 @@ void gripper_task(void *argument)
   for (uint8_t id = SERVO_ID_SCS0009_MIN; id <= SERVO_ID_SCS0009_MAX; id++) {
     servo_set_pos(id, SCS_OPEN);
     // BlockBasic_TurntableTo(SERVO_ID_SCS0009_MAX-id);
-    osDelay(5);
+    // osDelay(500);
+    // servo_set_pos(id, SCS_CLOSE);
+    // osDelay(500);
   }
   // Servo_Angle(BLOCK_TURNTABLE_HOME_DEG);
 
@@ -373,7 +375,7 @@ void gripper_task(void *argument)
     BlockCollect_Poll();
     // printf("%d,%d\r\n",IR_ObjectEntered(),IR_ObjectPresent());
     // MSP_Color_DebugPoll();
-    osDelay(5);
+    osDelay(10);
   }
   /* USER CODE END gripper_task */
 }

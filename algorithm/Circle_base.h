@@ -1,14 +1,8 @@
 /**
  * @file  Circle_base.h
- * @brief 找圆跟随控制模块
- *        根据 K230 圆检测的方向结果，控制麦轮底盘向圆移动
+ * @brief 找圆跟随 —— 按 K230 圆心偏差控制麦轮底盘移动
  *
- * 方向定义 (K230 发送):
- *   'O' = 圆心在中心区域  → 停止/抓取
- *   'W' = 圆心偏右        → 右移
- *   'E' = 圆心偏左        → 左移
- *   'N' = 圆心偏上        → 前进
- *   'S' = 圆心偏下        → 后退
+ *  'O' = 居中 (停止/抓取), 'W' = 偏右, 'E' = 偏左, 'N' = 偏上, 'S' = 偏下
  */
 
 #ifndef __CIRCLE_BASE_H
@@ -27,8 +21,8 @@ extern "C" {
 void Circle_Follow(void);
 
 extern bool flag_finish;
-extern float g_circle_k;      /* 圆心像素偏差 → 线速度(m/s) 的线性系数。
-                               * **不要从外部赋值** —— Circle_Follow() 每拍都会重算它 */
+extern float g_circle_k;      /* 像素偏差 → 线速度的线性系数。
+                               * **不要从外部赋值** —— Circle_Follow() 每拍重算 */
 extern float g_circle_vx;
 extern float g_circle_vy;
 extern char  g_circle_dir;

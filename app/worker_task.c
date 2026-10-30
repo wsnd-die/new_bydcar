@@ -26,31 +26,15 @@
 #include "ws2812.h"
 
 volatile uint8_t g_angle_ctrl_enable = 0;    /* 1 = 打开角度环 */
-/* 目标航向。★ V1.32.0 起单位改为**弧度**(与 locator_ops9 的 pose.yaw 同量纲) ——
- * 从前是"HWT906 的度", 那次改造把航向环的数据源从 HWT906 换成了 OPS9。
- * 注意: 全工程**没有**任何地方在写这个量(唯一的写方曾是 Angle_Fuction 里的
- * imu 链), 保留它是因为 arc_path/NavigationMecanum 仍把它当"契约量"置 0。 */
 volatile float   g_angle_target_yaw  = 0.0f;
 
-/* V1.23.0: 路线段打断。语义与用法见 worker_task.h 的说明。 */
 volatile uint8_t g_route_abort = 0u;
 volatile static uint8_t NAV_count=0;
 
 /** 物块进料时是否打断当前路线段。
  *
- *  0 (默认) = **不打断** —— "分点导航 + 到位蹭料"模式下唯一正确的选择:
- *      creep 保证了"车**到位之后**物块才进料", 那时根本没有段可以打断;
- *      而这个进料事件是从 gripper_task 上报的, 它的 `IR_ObjectEntered()` 内部有
- *      50/100ms 去抖(osDelay), 比导航侧的检测**晚 50~150ms** 才认账 ——
- *      迟到的打断正好落进**下一段刚起步**的窗口里, 把下一段打成"被打断"
- *      (而游标照常 s_idx++) → **平白跳过一个点位**。
- *      现场表现: 收完第 1 个奖杯就跳掉第 2 个点位。
- *
- *      关掉之后流程变成一步一点、完全确定:
- *          驱动到点N → 到位 → creep 把物块顶进进料口 → 采集侧收到 IR → 去点 N+1
- *
- *  1 = 旧语义(**边开边收**): 只在 `Nav_GoToWorld()` 正在驱动一段时接受打断。
- *      剪掉 creep、改回"一边开一边把物块扫进进料口"时才需要它。 */
+ *  0  = 不打断
+ *  1 只在 `Nav_GoToWorld()` 正在驱动一段时接受打断。 */
 #ifndef NF_ABORT_ON_FEED
 #define NF_ABORT_ON_FEED  0
 #endif
@@ -63,7 +47,6 @@ void Route_AbortRequest(void)
         g_route_abort = 1u;
     }
 #endif
-    /* NF_ABORT_ON_FEED == 0: 直接丢弃, 理由见上面的宏说明。 */
 }
 
 
@@ -71,8 +54,6 @@ osThreadId_t fcTaskHandle  = NULL;
 osThreadId_t nlfTaskHandle = NULL;
 
 
-/* 注: 原 `static AngleCtrl s_fc;` 已删 —— V1.32.0 把 angle_ctrl 改成
- * **模块内自持状态**(ISR 上下文), 不再由调用方持有实例。 */
 
 static volatile SystemMode_t s_nlf_pending = Event_STOP;
 
@@ -85,19 +66,8 @@ static void AG_Stop(void)
     Send_commandmotor(&zero);
 }
 /**
- * @brief 航向串级环的**任务式**调用样板
+ * @brief 航向串级环的任务调用
  *
- * @warning **本任务在当前工程里未被调用** —— `app_freertos.c` 的 `AC_Fuction()`
- *          里那行 `Angle_Fuction();` 是注释掉的。保留它只为留住"任务式调用"
- *          这条路径的样板。
- *
- * @note V1.32.0 改造后本函数已大幅瘦身, 三点说明:
- *   · 航向环的**实际步进在 `Nav_GoToWorld()` 的循环里**(`Angle_Step`), **不在这里**;
- *   · 本函数只把 `g_angle_ctrl_enable` / `g_angle_target_yaw` 这对**历史契约量**
- *     映射到新的 `Angle_Enable/Disable`。`Angle_Enable()` 每次调用都会**重置
- *     轨迹**, 所以只能走**边沿**, 不能每拍调。
- *   · 数据源已由 HWT906 换成 **OPS9**(在 `angle_ctrl` 内部自读), 这里**不再碰 IMU**
- *     —— 原来 `imu_hwt906.init()/update()/get_pose()` 那三处全删了。
  */
 void Angle_Fuction(void)
 {
@@ -108,8 +78,6 @@ void Angle_Fuction(void)
     for (;;)
     {
         if (g_angle_ctrl_enable && !was_on) {
-            /* ★ g_angle_target_yaw 是**弧度**(V1.32.0 起, 与 pose.yaw 同量纲,
-             *   不再是从前那个 HWT906 的度)。 */
             Angle_Enable(g_angle_target_yaw);
             was_on = 1;
         }
@@ -128,9 +96,9 @@ void FC_Fuction(void)
     osDelay(FC_TASK_PERIOD_MS);
 }
 
-/* ==================================================================
- * 四、NLF_TASK —— 流程
- * ================================================================== */
+/*
+ * NLF_TASK —— 流程
+ */
 
 void NLF_Request(SystemMode_t mode)
 {
@@ -167,40 +135,26 @@ void NLF_Fuction(void)
 
 
 
-/** 奖杯放置顺序 (按放置先后): 亚军 → 冠军 → 季军。
- *  对应旧 NLF_TASK 的 rank[3] = {second_place, champion, third_place}。
- *  ★ NX 接入点: 换成 NX 回传的 1/2/3 顺序。 */
+/** 奖杯放置顺序 : 亚军 → 冠军 → 季军。 */
 static const Jang_type NF_RANK[NF_RANK_COUNT] = {
     second_place, champion, third_place,
 };
 
-/* V1.21.1 **删除** `NF_TROPHY_SLOT[]` (名次 → 固定转盘工位: 冠军→3/亚军→2/季军→1)。
- *
- * 它是旧 QR 方案的产物 —— 那时 QR 码直接告诉你"冠军在哪个工位", 所以可以做一张
- * 名次→工位的固定表。现在奖杯落在哪个槽由**收集顺序**决定 (第 N 个进槽 N),
- * 名次是收完才填进 g_tt.trophy[] 的, 固定表与实际情况对不上, 照它转盘会拿错奖杯。
- * 摆放阶段已改成反查 g_tt.trophy[] (见 ColorIdentif.c 的 SlotByTrophy)。 */
 
 
-static const int16_t NF_PLACE_HEIGHT[4] = { 0, -6, -6, -5 };
 
-/** 五个槽位里实际放的物块颜色。
- *  ★ NX 接入点: 换成 NX 回传的「收集到的颜色物块」。
- *  @note 旧流程这里由 BsRt_task + 颜色传感器**本地读色**填入; 按用户决定
- *        (2026-09-28) 下位机不再读色, 改由 NX 回传, 故现在写死。 */
+static const int16_t NF_PLACE_HEIGHT[4] = { 0, -10, -9, -5 };
+
+/** 五个槽位里实际放的物块颜色。 */
 static const Color_TypeDef NF_SLOT_COLORS[NF_TASK1_SLOT_COUNT] = {
     COLOR_BLUE,COLOR_BLUE ,COLOR_RED,COLOR_RED,
 };
 static const  BlockShape_t NF_SLOT_SHAP[NF_TASK1_SLOT_COUNT] = {
     SHAPE_CYLINDER, SHAPE_RECT,SHAPE_CYLINDER,SHAPE_RECT,
 };
-/** 物块任务的槽位映射图案号 (0~15), 即旧 QR 左码解出的序号。
- *  ★ NX 接入点: 换成 NX 回传的映射序号。 */
 #define NF_TASK1_QR_IDX     0u
 
-/* ==================================================================
- * 4.2  流程顺序表与状态
- * ================================================================== */
+/*  流程顺序表与状态 */
 
 
 typedef struct {
@@ -215,32 +169,27 @@ typedef struct {
 // };
 #define NF_STAGE_COUNT  (sizeof(NF_STAGES) / sizeof(NF_STAGES[0]))
 
-#if 1   /* ---- 原表: 完整比赛流程 (测完改回 #if 1) ---- */
+#if 1   /* ---- 完整比赛流程   ---- */
 static const NF_Stage_t NF_STAGES[] = {
       { Event_Collect_R, 1u },
      // { Event_Navigation, 4u },
       { Event_PlaceDown, 3u },
      {Event_Collect_L,  1u },
-    { Event_FindCircle,  3u },   /* 1 黄锥 + 4 物块 = T1[] 的 4 行 + 首轮 */
+    { Event_FindCircle,  3u },   /* 1 黄锥 + 4 物块 */
 };
 
 #endif
 
-/* 流程进度。对应旧 NLF_TASK 的 P_Nava / NavafterNum[P_Nava] / i / flag_finish。 */
-static uint8_t s_stage_idx  = 0u;   /* 当初的 P_Nava */
-static uint8_t s_stage_left = 0u;   /* 当初的 NavafterNum[P_Nava] */
-static uint8_t s_place_idx  = 0u;   /* 当初的 i, 奖杯放置进度 */
-static bool    s_place_latch = false; /* 当初的 flag_finish, 本阶段转盘是否已就位 */
-static bool    s_flow_seeded = false; /* NF_FlowSeed() 的一次性门闩 */
+static uint8_t s_stage_idx  = 0u;
+static uint8_t s_stage_left = 0u;
+static uint8_t s_place_idx  = 0u;   /*  奖杯放置进度 */
+static bool    s_place_latch = false; /*  本阶段转盘是否已就位 */
+static bool    s_flow_seeded = false;
 
-/** 找圆阶段的等待上限。Circle_Follow() 是单拍函数, 靠外层循环推进;
- *  上位机没接 / 没识别到圆心时 g_circle_dir 永远不会变成 'O',
- *  没有这道超时流程会永久卡死在这里。 */
+/** 找圆阶段的等待上限。 */
 #define NF_CIRCLE_TIMEOUT_MS   60000u
 
-/** 找圆失败时「退回上一个点位重跑」的次数上限。
- *  到顶了还没找到就回老路: 放弃本拍, 继续 Navigation。
- *  @note **必须设上限** —— 圆一直识别不到的话, 退回去也会再超时, 不封顶就是死循环。 */
+/** 找圆失败时的次数上限。 */
 #define NF_CIRCLE_RETRY_MAX    3u
 
 /** 上电是否自动开跑。0 = 等调度器收到事件再跑。 */
@@ -248,10 +197,7 @@ static bool    s_flow_seeded = false; /* NF_FlowSeed() 的一次性门闩 */
 #define NF_AUTOSTART  0
 #endif
 
-/**
- * @brief 把 4.1 的硬编码默认值灌进业务层的数据结构。只跑一次。
- * @note  这是 NX 接入时**唯一**要改的函数体。
- */
+/** 把 4.1 的硬编码默认值灌进业务层的数据结构。只跑一次。*/
 static void NF_FlowSeed(void)
 {
     if (s_flow_seeded) {
@@ -341,18 +287,7 @@ static const struct {
  */
 static bool NF_RouteStep(void)
 {
-    /* 打断(g_route_abort)是给**正在跑的那一段**用的 —— Nav_GoToWorld 在段内看到它
-     * 就把这一段提前结束。但**段与段之间**到达的进料事件没有段可打断, 标志会一直
-     * 挂着, 直到下一段刚起步时被消费 → 下一段瞬间返回(Nav_LastAborted), 而游标
-     * 照常 s_idx++ → **平白吃掉一个点位**。
-     *
-     * 现场表现: 收完第 1 个奖杯后"莫名跳一个点位"(V1.24.4 修)。
-     * 成因是 V1.24.3 的"到位后向前蹭料": 物块是在**导航段结束之后**才被顶进去的,
-     * 那个进料事件正好落进这个窗口。NF_CreepForward() 结尾清一次只能挡住"蹭的
-     * 过程中"来的; 蹭完才来的挡不住, 两个任务看到 IR 的时刻差 10~15ms, 谁先谁后
-     * 是随机的 —— 所以是偶发。
-     *
-     * @note 这**不影响**正常打断: 段**中途**来的进料仍然由 Nav_GoToWorld 内部消费。 */
+
     g_route_abort = 0u;
 
 #if NF_ROUTE_ARC
@@ -384,36 +319,21 @@ static bool NF_RouteStep(void)
 #endif
 }
 
-/**
- * 中继站: 走一段路线, 派发顺序表里的下一项; 表跑完就回家。
- *
- * V1.23.0: 走路线的那一句由 `Nav_FeDuanPoint()` 换成了 `NF_RouteStep()`
- * (路线源可编译期切换)。**除此之外一字未改** —— 收集与导航的解耦不在这
- * 条路径上, 而在 `NF_Stage_Collect()` 不再阻塞 (见该函数)。
- */
-static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
-/* ==================================================================
- * 到位后"向前蹭料" (V1.24.3)
- *
- * 采集点位上, 位置环判"到位"时车头离物块还差一点点, 进料口 IR 不触发 →
- * 采集侧 wait_block_entered() 干等 5s 超时, 物块收不到。
- *
- * 所以在流程派发下一个阶段**之前**, 原地向前低速蹭一小段, 一直蹭到物块
- * "完全进入"进料口为止。距离和时长两道限幅, 蹭不进去也不会一直顶着。
- * ================================================================== */
-#define NF_CREEP_FWD_M       0.3f    /* 前进距离上限 (m) —— 第一道限幅 */
-#define NF_CREEP_VMPS        0.5f    /* 蹭的速度 (m/s)。顶不动就往上提 (0.10) */
-#define NF_CREEP_TIMEOUT_MS  2300u    /* 总时长上限 (ms) —— 第二道限幅 */
-#define NF_CREEP_TICK_MS     10u      /* 蹭的控制周期 (ms) */
 
-/** 需要"到位后向前蹭"的点位 (1 基点号, 与 NavigationMecanum.c 的
- *  g_waypoints[] 注释编号一致): 1~3 奖杯点 + 7~11 物料点 e/c/d/a/b, 共 8 个。
- *  ★ 只改这张表就换点位。 */
+static BlockCollectStage_t cur_stage = COLLECT_TROPHY;
+
+#define NF_CREEP_FWD_M       0.3f    /* 前进距离上限 (m) */
+#define NF_CREEP_VMPS        0.4f    /* 速度 (m/s)。) */
+#define NF_CREEP_TIMEOUT_MS  2300u    /* 总时长上限 (ms)*/
+#define NF_CREEP_TICK_MS     10u      /* 控制周期 (ms) */
+
+/** 需要"到位后向前"的点位 (1 基点号, 与 NavigationMecanum.c 的
+ *  g_waypoints[] 注释编号一致): 1~3 奖杯点。 */
 static const uint8_t NF_CREEP_WP[] = {
     1u, 2u, 3u,
 };
 
-/** @brief 点号是否在"要蹭"的表里。 */
+/** @brief 点号是否在表里。 */
 static bool NF_NeedCreep(uint8_t wp)
 {
     for (uint8_t i = 0u; i < (uint8_t)(sizeof(NF_CREEP_WP) / sizeof(NF_CREEP_WP[0])); i++) {
@@ -435,25 +355,25 @@ static void NF_CreepForward(void)
            ((osKernelGetTickCount() - t0) < NF_CREEP_TIMEOUT_MS))
     {
         MecanumResult cmd = Mecanum_Calc_Full_V(NF_CREEP_VMPS, 0.0f, 0.0f);
-        Send_commandmotor(&cmd);             /* 车体系: 车头朝哪就往前哪 */
+        Send_commandmotor(&cmd);             /* 车体系*/
         osDelay(NF_CREEP_TICK_MS);
         travel += NF_CREEP_VMPS * ((float)NF_CREEP_TICK_MS / 1000.0f);
 
         bool now  = IR_ObjectPresent();
-        bool fell = (ir_last && !now);       /* 遮光 → 恢复 = 疑似"完全进入" */
+        bool fell = (ir_last && !now);       /* 遮光 → 恢复 */
         ir_last   = now;
 
         if (fell) {
-            osDelay(20);                     /* 复确认一拍, 防毛刺 */
+            osDelay(20);                     /* 防毛刺 */
             if (!IR_ObjectPresent()) {
-                break;                       /* 确实恢复了 → 物块进去了 */
+                break;                       /*  物块进去了 */
             }
-            ir_last = true;                  /* 是毛刺: 当作还在遮光 */
+            ir_last = true;                  /* 还在遮光 */
         }
     }
 
     AG_Stop();
-    g_route_abort = 0u;                      /* 见函数头: 消化蹭的过程中来的打断 */
+    g_route_abort = 0u;                      /* 消化过程中来的打断 */
     printf("[FLOW] creep: travel=%.0fmm\r\n", travel * 1000.0f);
 }
 
@@ -527,13 +447,8 @@ static void NF_Stage_Collect(BlockCollectStage_t stage)
     NX_ApplyMode();
 
     BlockCollect_Reset();
-    BlockCollect_Start();            /* 只置请求; gripper_task 下一拍开始跑 */
+    BlockCollect_Start();            /* 只置请求; */
 
-    /* 物料摆放的"找块"游标必须**每轮**复位 (V1.26.5)。
-     * 原来只在 NF_FlowSeed() 里调一次, 而它被 s_flow_seeded 门闩成"每次上电
-     * 只跑一次" —— 第二次按键开跑时游标还停在上轮末尾, TT_SeekBlock() 直接
-     * 返回 0, 整轮 FindCircle 全部"找不到", 一件都放不出去;
-     * 若上轮只走了一半, 游标从中间接着走 → **圆锥那一格被跳过**。 */
     if (stage == COLLECT_BLOCK) {
         TT_RotateReset();
     }
@@ -547,6 +462,7 @@ static void NF_Stage_FindCircle(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
+    BlockBasic_LiftToAbs(0);
     BlockBasic_TurntableTo(BLOCK_FIRST_SLOT);
     t0 = HAL_GetTick();
     while (g_circle_dir != 'O') {
@@ -587,9 +503,7 @@ static void NF_Stage_PlaceDown(void)
 
     NX_RequestMode(NX_MODE_CIRCLE);
     NX_ApplyMode();
-    /* 原来这里有一句 `g_circle_speed = 1.0f;` —— 是**死代码**:
-     * Circle_Follow() 每拍都会按圆心偏差重算这个系数, 外部赋值立刻被覆盖。
-     * 而且它一旦生效就是灾难(系数 1.0 × 20px 偏差 = 20 m/s)。已删。 */
+
 
     if (!s_place_latch) {
         if (slot_idx == SLOT_NONE) {
@@ -602,7 +516,7 @@ static void NF_Stage_PlaceDown(void)
         }
 
         if (rank == third_place) {
-            BlockBasic_LiftToAbs(8.0f);    /* 季军预下降: 降到 5mm (等价原 DOWN,33: 38-33) */
+            BlockBasic_LiftToAbs(8.0f);    /* 季军预下降: 降到 5mm  */
             // osDelay(170);
         }
         BlockBasic_TurntableTo(tslot);
@@ -621,12 +535,12 @@ static void NF_Stage_PlaceDown(void)
         }
         // osDelay(10);
     }
-    /* 3) 放置 + 收尾 */
-    Place('O', g_circle_avg_x,g_circle_avg_y , NF_PLACE_HEIGHT[(uint8_t)rank], tslot);   /* 奖杯: 松开该奖杯所在的槽 */
+    /*  放置 + 收尾 */
+    Place('O', g_circle_avg_x,g_circle_avg_y , NF_PLACE_HEIGHT[(uint8_t)rank], tslot);   /* 松开该奖杯所在的槽 */
     printf("[FLOW] PlaceDown rank=%d slot=%u done\r\n", (int)rank, (unsigned)tslot);
 
     if (rank == second_place) {
-        BlockBasic_LiftToAbs(51.0f);   /* 亚军: 放完升到 43mm (等价原 UP,20: 23+20) */
+        BlockBasic_LiftToAbs(50.5f);   /* 亚军: 放完升到 43mm ) */
         // osDelay(250);
     }
 
@@ -638,7 +552,7 @@ static void NF_Stage_PlaceDown(void)
 }
 static void NF_Start(void)
 {
-    SystemMode_t mode = Event_Navigation;      /* 初值只是兜底, 见下 */
+    SystemMode_t mode = Event_Navigation;
 
     if (!NF_DispatchNext(&mode)) {
         printf("[FLOW] 表已跑完, 忽略启动键\r\n");
@@ -657,35 +571,23 @@ void NF_StartSecnd() {
 
 }
 
-/** 回家: 只走到 g_waypoints[] 的最后一行 (表里标的"17 回家点"), 然后停车。
- *  @note  V1.24.2 之前这里调 `Nav_RunWaypoints()`, 那是**从 0 号点开始把整张
- *         表再走一遍**(17 个点) —— 加上流程自己的十几段导航, 表现就是"连着
- *         跑两遍"。回家就该只走回家点, 不是再巡一圈。 */
 static void NF_Stage_GoHome(void)
 {
-    /* 先清掉可能残留的打断请求 —— 它是**电平不是队列**, 采集跑完时若还挂着,
-     * 会让这一段第一拍就被打断、直接跳过。见 worker_task.h 的 g_route_abort。 */
     g_route_abort = 0u;
 
     if (g_waypoint_count > 0u) {
-        /* 回家是**长距离空驶、不在乎末端精度** —— 单独放大本段速度倍率
-         * (VMAX/BRK/近场爬行上限一起乘, 航向环不受影响)。
-         * `NAV_HOME_SPEED` 在 NavigationMecanum.h, 只改那一个数就调快慢。
-         * Nav_GoToWorld() 三个出口会自动还原成 1.0, 这里**不用**恢复。 */
         g_nav_leg_speed = NAV_HOME_SPEED;
-        (void)Nav_GoToWorld(0.03f, 0.03f ,0.0f);
+        (void)Nav_GoToWorld(0.05f, 0.05f ,0.0f);
     }
 
     AG_Stop();
 }
 
-/* ==================================================================
- * 4.4  流程出口
- * ================================================================== */
+/* 流程出口*/
 
 void NLF_RunFlow(SystemMode_t mode)
 {
-    NF_FlowSeed();      /* 幂等; 首次调用时灌硬编码默认值 */
+    NF_FlowSeed();
 
     switch (mode)
     {
@@ -717,7 +619,7 @@ void NLF_RunFlow(SystemMode_t mode)
 
         case Event_NavCircleL:
             /* 跑一段定半径圆弧  */
-            Nav_Cricle(Nav_CricleL ,  0.91f, 170*NAV_DEG2RAD );
+            Nav_Cricle(Nav_CricleL ,  0.87f, 170*NAV_DEG2RAD );
             break;
         case Event_NavCircleR:
             Nav_Cricle(Nav_CricleR , 0.93f ,170*NAV_DEG2RAD );
@@ -730,7 +632,7 @@ void NLF_RunFlow(SystemMode_t mode)
             break;
         case Event_STOP:
             /* 急停 */
-            Arc_Abort();                /* = 关环 + 清线速度/前馈 */
+            Arc_Abort();                /*  关环  清线速度/前馈 */
             AG_Stop();
             break;
 
